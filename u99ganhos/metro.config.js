@@ -7,4 +7,7 @@ if (config.resolver && config.resolver.assetExts) {
     config.resolver.assetExts.push('wasm');
 }
 
+// Add reanimated plugin to transformer
+config.transformer.babelTransformerPath = require.resolve("react-native-reanimated/metro-react-native-babel-transformer");
+
 module.exports = config;

@@ -1,18 +1,26 @@
-# Script para mover o projeto para C: e fazer o build
+# Script para gerar o APK do aplicativo Expo
 
-# 1. Copiar arquivos (exceto node_modules)
-Write-Host "Copiando arquivos para C:\u99ganhos..."
-robocopy D:\u99ganhos C:\u99ganhos /E /XD node_modules .expo .git android ios
+Write-Host "Iniciando o processo de build do APK..." -ForegroundColor Green
 
-# 2. Navegar para a nova pasta
-Set-Location C:\u99ganhos
+# Verifica se está logado na conta Expo
+Write-Host "Verificando login na conta Expo..." -ForegroundColor Yellow
+npx eas-cli whoami
 
-# 3. Instalar dependências
-Write-Host "Instalando dependências..."
-npm install
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Você precisa fazer login na sua conta Expo." -ForegroundColor Red
+    Write-Host "Execute: npx eas-cli login" -ForegroundColor Cyan
+    exit 1
+}
 
-# 4. Fazer o build
-Write-Host "Iniciando build do APK..."
-npx eas build -p android --profile preview
+# Atualiza as dependências
+Write-Host "Atualizando dependências..." -ForegroundColor Yellow
+npm install --legacy-peer-deps
 
-Write-Host "Pronto! Siga as instruções na tela."
+# Executa o build para Android como APK
+Write-Host "Iniciando o build do APK para Android..." -ForegroundColor Yellow
+npx eas-cli build --profile preview --platform android --no-wait
+
+Write-Host "O build foi iniciado. Verifique o status no painel web do Expo:" -ForegroundColor Green
+Write-Host "https://expo.dev/accounts/lzin9889/projects/u99ganhos-app/builds" -ForegroundColor Cyan
+
+Write-Host "Quando o build estiver completo, o link para download do APK será exibido." -ForegroundColor Green
