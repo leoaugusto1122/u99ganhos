@@ -10,6 +10,11 @@
     "web": "expo start --web",
     "lint": "expo lint"
   },
+  "pnpm": {
+  "overrides": {
+    "react-native-safe-area-context": "5.6.2"
+  }
+   },
   "dependencies": {
     "@apollo/client": "^3.4.10",
     "@expo-google-fonts/inter": "^0.4.1",
@@ -146,7 +151,6 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@types/react": "19.1.17",
-    "eas-cli": "^16.28.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "react-dev-inspector": "^2.0.1",

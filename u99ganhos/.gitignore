@@ -3,6 +3,10 @@
 # dependencies
 node_modules/
 
+# Custom Native Code (CNG/Prebuild)
+/android
+/ios
+
 # Expo
 .expo/
 dist/
