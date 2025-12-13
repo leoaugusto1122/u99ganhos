@@ -1,9 +1,12 @@
-module.exports = function (api) {
-  api.cache(false)
+
+// babel.config.js
+module.exports = function(api) {
+  api.cache(true);
   return {
     presets: ['babel-preset-expo'],
     plugins: [
-      'react-native-reanimated/plugin',
+      // ... outros plugins, se houver
+      'react-native-reanimated/plugin', // ESSA LINHA É ESSENCIAL
     ],
-  }
-}
+  };
+};
