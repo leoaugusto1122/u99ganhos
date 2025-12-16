@@ -78,7 +78,9 @@ export default function CustomTabBar({ state, descriptors, navigation, onPressGa
         })}
       </View>
       <View style={styles.fabWrapper}>
-        <FloatingActionButton onPressGanhos={onPressGanhos} onPressDespesas={onPressDespesas} />
+        {state.index === 0 && (
+          <FloatingActionButton onPressGanhos={onPressGanhos} onPressDespesas={onPressDespesas} />
+        )}
       </View>
     </View>
   );

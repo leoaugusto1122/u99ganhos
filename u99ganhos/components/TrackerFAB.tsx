@@ -7,6 +7,7 @@ import {
     Animated,
     Alert,
     Platform,
+    ActionSheetIOS,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFinance } from '@/hooks/useFinance';
@@ -123,197 +124,136 @@ export default function TrackerFAB() {
     };
 
     const handleStop = () => {
-        const distance = currentDistance.toFixed(2);
+        const distance = parseFloat(currentDistance.toFixed(2));
         const duration = formatDuration(currentDuration);
 
-        if (Platform.OS === 'web') {
-            const createRecord = confirm(
-                `Percurso Finalizado\n\nDistância: ${distance} km\nTempo: ${duration}\n\nDeseja criar lançamento de ganho?`
-            );
-
-            stopKMTracking(true);
-
-            if (createRecord && (global as any).openEarningsWithKm) {
-                (global as any).openEarningsWithKm(parseFloat(distance));
-            }
-        } else {
-            Alert.alert(
-                'Percurso Finalizado',
-                `Distância: ${distance} km\nTempo: ${duration}\n\nO que deseja fazer?`,
-                [
-                    {
-                        text: 'Descartar',
-                        style: 'cancel',
-                        onPress: () => stopKMTracking(false)
-                    },
-                    {
-                        text: 'Salvar no Veículo',
-                        onPress: () => stopKMTracking(true)
-                    },
-                    {
-                        text: 'Salvar + Lançamento',
-                        onPress: () => {
-                            stopKMTracking(true);
-                            if ((global as any).openEarningsWithKm) {
-                                (global as any).openEarningsWithKm(parseFloat(distance));
-                            }
+        Alert.alert(
+            'Finalizar Percurso',
+            `Distância: ${distance.toFixed(2)} km\nTempo: ${duration}`,
+            [
+                { text: 'Descartar', style: 'cancel', onPress: () => stopKMTracking(false) },
+                {
+                    text: 'Salvar apenas',
+                    onPress: () => stopKMTracking(true)
+                },
+                {
+                    text: 'Salvar e Lançar Ganho',
+                    onPress: () => {
+                        stopKMTracking(true);
+                        // Call global function to open earnings modal with KM
+                        if ((global as any).openEarningsWithKm) {
+                            (global as any).openEarningsWithKm(distance);
                         }
                     }
-                ]
-            );
-        }
+                }
+            ]
+        );
         setExpanded(false);
     };
 
-    const toggleExpanded = () => {
-        setExpanded(!expanded);
+    const handleAction = () => {
+        if (!hasActiveSession) {
+            handleStart();
+            return;
+        }
+
+        // If tracking or paused, show options in simple Alert
+        Alert.alert(
+            'Controle de Rastreamento',
+            isPaused ? 'Percurso Pausado' : 'Percurso em Andamento',
+            [
+                { text: 'Voltar', style: 'cancel' },
+                isPaused
+                    ? { text: 'Retomar', onPress: resumeKMTracking }
+                    : { text: 'Pausar', onPress: pauseKMTracking },
+                {
+                    text: 'Encerrar',
+                    style: 'destructive',
+                    onPress: handleStop
+                },
+                { text: 'Ver Detalhes', onPress: () => router.push('/tracker') }
+            ]
+        );
     };
 
     // Don't render if no vehicles
     if (data.vehicles.length === 0) return null;
 
-    if (!hasActiveSession) {
-        // Start Button (No active session)
-        return (
-            <TouchableOpacity
-                style={styles.fab}
-                onPress={handleStart}
-                activeOpacity={0.8}
-            >
-                <MaterialIcons name="my-location" size={28} color="#FFF" />
-            </TouchableOpacity>
-        );
-    }
-
-    // Active/Paused State with Controls
     return (
         <View style={styles.fabContainer}>
-            {/* Expanded Controls */}
-            {expanded && (
-                <Animated.View
-                    style={[
-                        styles.expandedControls,
-                        {
-                            opacity: expandAnim,
-                            transform: [{
-                                translateY: expandAnim.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [20, 0],
-                                })
-                            }],
-                        }
-                    ]}
-                >
-                    {isTracking && (
-                        <TouchableOpacity
-                            style={[styles.controlButton, styles.pauseButton]}
-                            onPress={() => { pauseKMTracking(); setExpanded(false); }}
-                        >
-                            <MaterialIcons name="pause" size={20} color="#FFF" />
-                            <Text style={styles.controlButtonText}>Pausar</Text>
-                        </TouchableOpacity>
-                    )}
-
-                    {isPaused && (
-                        <TouchableOpacity
-                            style={[styles.controlButton, styles.resumeButton]}
-                            onPress={() => { resumeKMTracking(); setExpanded(false); }}
-                        >
-                            <MaterialIcons name="play-arrow" size={20} color="#FFF" />
-                            <Text style={styles.controlButtonText}>Retomar</Text>
-                        </TouchableOpacity>
-                    )}
-
-                    <TouchableOpacity
-                        style={[styles.controlButton, styles.stopButton]}
-                        onPress={handleStop}
-                    >
-                        <MaterialIcons name="stop" size={20} color="#FFF" />
-                        <Text style={styles.controlButtonText}>Encerrar</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.controlButton, styles.detailsButton]}
-                        onPress={() => { router.push('/tracker'); setExpanded(false); }}
-                    >
-                        <MaterialIcons name="analytics" size={20} color="#FFF" />
-                        <Text style={styles.controlButtonText}>Detalhes</Text>
-                    </TouchableOpacity>
-                </Animated.View>
+            {/* Stats Badge */}
+            {hasActiveSession && (
+                <View style={styles.fabStats}>
+                    <Text style={styles.fabDistance}>{currentDistance.toFixed(2)} km</Text>
+                    <Text style={styles.fabTime}>{formatDuration(currentDuration)}</Text>
+                </View>
             )}
 
             {/* Main FAB */}
             <TouchableOpacity
                 style={[
                     styles.fab,
-                    isTracking && styles.fabActive,
+                    isTracking && styles.fabRecording,
                     isPaused && styles.fabPaused
                 ]}
-                onPress={toggleExpanded}
+                onPress={handleAction}
                 activeOpacity={0.8}
             >
-                <Animated.View style={{ transform: [{ scale: isTracking ? pulseAnim : 1 }] }}>
+                {isTracking ? (
+                    <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                        <MaterialIcons name="stop" size={28} color="#FFF" />
+                    </Animated.View>
+                ) : (
                     <MaterialIcons
-                        name={isPaused ? 'pause-circle-filled' : 'gps-fixed'}
+                        name={isPaused ? 'play-arrow' : 'gps-fixed'}
                         size={28}
                         color="#FFF"
                     />
-                </Animated.View>
-
-                <View style={styles.fabStats}>
-                    <Text style={styles.fabDistance}>{currentDistance.toFixed(1)}</Text>
-                    <Text style={styles.fabTime}>{formatDuration(currentDuration)}</Text>
-                </View>
-
-                {/* Expand Indicator */}
-                <View style={styles.expandIndicator}>
-                    <MaterialIcons
-                        name={expanded ? 'expand-more' : 'expand-less'}
-                        size={16}
-                        color="#FFF"
-                    />
-                </View>
+                )}
             </TouchableOpacity>
-        </View>
+        </View >
     );
 }
 
 const styles = StyleSheet.create({
     fabContainer: {
         position: 'absolute',
-        right: 16,
-        bottom: 80,
-        alignItems: 'flex-end',
+        right: 20,
+        bottom: 90, // Adjusted to avoid tab bar
+        alignItems: 'center',
+        justifyContent: 'center',
         zIndex: 1000,
     },
-
     fab: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
+        width: 56, // Smaller, standard FAB size
+        height: 56,
+        borderRadius: 28,
         backgroundColor: '#00A85A',
         justifyContent: 'center',
         alignItems: 'center',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 8,
+        shadowRadius: 6,
+        elevation: 6,
     },
-    fabActive: {
-        backgroundColor: '#00A85A',
-        width: 120,
-        borderRadius: 32,
-        paddingHorizontal: 12,
+    fabRecording: {
+        backgroundColor: '#EF4444',
     },
     fabPaused: {
         backgroundColor: '#F59E0B',
     },
-
     fabStats: {
         position: 'absolute',
-        left: 48,
-        alignItems: 'flex-start',
+        bottom: 64, // Floating above button
+        backgroundColor: 'rgba(31, 41, 55, 0.9)', // Dark bg
+        paddingVertical: 4,
+        paddingHorizontal: 10,
+        borderRadius: 12,
+        alignItems: 'center',
+        marginBottom: 8,
+        borderWidth: 1,
+        borderColor: '#374151'
     },
     fabDistance: {
         fontSize: 14,
@@ -322,51 +262,7 @@ const styles = StyleSheet.create({
     },
     fabTime: {
         fontSize: 10,
-        color: '#FFF',
-        opacity: 0.9,
-    },
-
-    expandIndicator: {
-        position: 'absolute',
-        top: 4,
-        right: 4,
-    },
-
-    // Expanded Controls
-    expandedControls: {
-        marginBottom: 12,
-        gap: 8,
-    },
-    controlButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderRadius: 24,
-        gap: 8,
-        minWidth: 120,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-        elevation: 4,
-    },
-    controlButtonText: {
-        color: '#FFF',
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    pauseButton: {
-        backgroundColor: '#F59E0B',
-    },
-    resumeButton: {
-        backgroundColor: '#3B82F6',
-    },
-    stopButton: {
-        backgroundColor: '#EF4444',
-    },
-    detailsButton: {
-        backgroundColor: '#6B7280',
-    },
+        color: '#9CA3AF',
+        fontVariant: ['tabular-nums'],
+    }
 });

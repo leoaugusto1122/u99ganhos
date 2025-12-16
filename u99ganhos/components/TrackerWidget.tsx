@@ -5,6 +5,8 @@ import {
     StyleSheet,
     TouchableOpacity,
     Animated,
+    Alert,
+    Platform
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFinance } from '@/hooks/useFinance';
@@ -62,7 +64,46 @@ export default function TrackerWidget() {
     };
 
     const handleQuickStart = () => {
-        startKMTracking(data.vehicles[0]?.id);
+        // Validation: Must have active vehicle
+        const activeVehicle = data.vehicles.find(v => v.active);
+        if (!activeVehicle) {
+            Alert.alert(
+                'Veículo Obrigatório',
+                'Para iniciar o rastreamento, é necessário ter um veículo ativo cadastrado.',
+                [
+                    { text: 'Cadastrar', onPress: () => router.push('/veiculos') },
+                    { text: 'Cancelar', style: 'cancel' }
+                ]
+            );
+            return;
+        }
+        startKMTracking(activeVehicle.id);
+    };
+
+    const handleStop = () => {
+        const distance = parseFloat(currentDistance.toFixed(2));
+        const duration = formatDuration(currentDuration);
+
+        Alert.alert(
+            'Finalizar Percurso',
+            `Distância: ${distance.toFixed(2)} km\nTempo: ${duration}`,
+            [
+                { text: 'Descartar', style: 'cancel', onPress: () => stopKMTracking(false) },
+                {
+                    text: 'Salvar apenas',
+                    onPress: () => stopKMTracking(true)
+                },
+                {
+                    text: 'Salvar e Lançar Ganho',
+                    onPress: () => {
+                        stopKMTracking(true);
+                        if ((global as any).openEarningsWithKm) {
+                            (global as any).openEarningsWithKm(distance);
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const handleOpenFullTracker = () => {
@@ -100,19 +141,25 @@ export default function TrackerWidget() {
                     <View style={styles.activeControls}>
                         {isTracking ? (
                             <TouchableOpacity
-                                style={styles.miniButton}
+                                style={styles.controlButton}
                                 onPress={(e) => { e.stopPropagation(); pauseKMTracking(); }}
                             >
-                                <MaterialIcons name="pause" size={16} color="#FFF" />
+                                <MaterialIcons name="pause" size={20} color="#F59E0B" />
                             </TouchableOpacity>
                         ) : (
                             <TouchableOpacity
-                                style={styles.miniButton}
+                                style={styles.controlButton}
                                 onPress={(e) => { e.stopPropagation(); resumeKMTracking(); }}
                             >
-                                <MaterialIcons name="play-arrow" size={16} color="#FFF" />
+                                <MaterialIcons name="play-arrow" size={20} color="#3B82F6" />
                             </TouchableOpacity>
                         )}
+                        <TouchableOpacity
+                            style={styles.controlButton}
+                            onPress={(e) => { e.stopPropagation(); handleStop(); }}
+                        >
+                            <MaterialIcons name="stop" size={20} color="#EF4444" />
+                        </TouchableOpacity>
                     </View>
                 </TouchableOpacity>
             ) : (
@@ -170,12 +217,12 @@ const styles = StyleSheet.create({
 
     activeControls: {
         flexDirection: 'row',
-        gap: 8,
+        gap: 12,
     },
-    miniButton: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+    controlButton: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
         backgroundColor: '#374151',
         justifyContent: 'center',
         alignItems: 'center',

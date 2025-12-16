@@ -55,6 +55,7 @@ export default function MaisScreen() {
         { label: 'Apps de Ganhos', icon: 'apps', route: '/configuracoes?section=apps' },
         { label: 'Categorias de Custos', icon: 'category', route: '/configuracoes?section=categoria' },
         { label: 'Custos Recorrentes', icon: 'attach-money', route: '/configuracoes?section=custos' },
+        { label: 'Permissões do Sistema', icon: 'security', route: '/configuracoes?section=permissoes' },
       ]
     },
     {

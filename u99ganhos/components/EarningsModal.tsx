@@ -25,6 +25,8 @@ interface EarningsModalProps {
     grossEarnings: number;
     hoursWorked: number;
     extraExpenses: number;
+    variableCosts: any[];
+    vehicleId: string;
   }) => void;
   initialData?: EarningsRecord | null;
   prefilledKm?: number;
@@ -35,6 +37,8 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
   const [date, setDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [appId, setAppId] = useState('');
+  const [vehicleId, setVehicleId] = useState('');
+  const [showVehicleSelector, setShowVehicleSelector] = useState(false);
   const [kmDriven, setKmDriven] = useState('');
   const [grossEarnings, setGrossEarnings] = useState('');
   const [hoursWorked, setHoursWorked] = useState('');
@@ -51,10 +55,16 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
         // Editing existing record
         setDate(new Date(initialData.date + 'T00:00:00'));
         setAppId(initialData.appId);
-        setKmDriven(initialData.kmDriven.toString());
+        setVehicleId(initialData.vehicleId || '');
+        setKmDriven(initialData.kmDriven ? initialData.kmDriven.toString() : '');
         setGrossEarnings(formatCurrencyFromNumber(initialData.grossEarnings));
-        setHoursWorked(initialData.hoursWorked.toString());
-        setExtraExpenses(initialData.extraExpenses > 0 ? formatCurrencyFromNumber(initialData.extraExpenses) : '');
+        setHoursWorked(initialData.hoursWorked ? initialData.hoursWorked.toString() : '');
+
+        // Calculate extra expenses from variableCosts
+        const totalExtras = initialData.variableCosts
+          ? initialData.variableCosts.reduce((sum, cost) => sum + cost.value, 0)
+          : 0;
+        setExtraExpenses(totalExtras > 0 ? formatCurrencyFromNumber(totalExtras) : '');
       } else {
         // Creating new record
         setDate(new Date());
@@ -65,6 +75,14 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
         } else {
           setAppId('');
         }
+
+        // Default Vehicle
+        const activeVehicle = data.vehicles.find(v => v.active);
+        if (activeVehicle) {
+          setVehicleId(activeVehicle.id);
+        } else {
+          setVehicleId('');
+        }
         // Use prefilled KM if provided (from GPS tracker)
         setKmDriven(prefilledKm ? prefilledKm.toString() : '');
         setGrossEarnings('');
@@ -72,7 +90,7 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
         setExtraExpenses('');
       }
     }
-  }, [visible, initialData, prefilledKm, data.faturamentoApps]);
+  }, [visible, initialData, prefilledKm, data.faturamentoApps, data.vehicles]);
 
   const formatCurrencyFromNumber = (value: number): string => {
     return value.toLocaleString('pt-BR', {
@@ -130,8 +148,8 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
   };
 
   const handleSave = () => {
-    if (!kmDriven || !grossEarnings || !hoursWorked || !appId) {
-      showAlert('Erro', 'Por favor, preencha todos os campos obrigatórios (inclusive o app de ganho)');
+    if (!kmDriven || !grossEarnings || !hoursWorked || !appId || !vehicleId) {
+      showAlert('Erro', 'Por favor, preencha todos os campos obrigatórios (inclusive Veículo e App)');
       return;
     }
 
@@ -170,16 +188,33 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
       return;
     }
 
+    const selectedVehicle = data.vehicles.find(v => v.id === vehicleId);
+    if (!selectedVehicle) {
+      showAlert('Erro', 'Veículo inválido selecionado');
+      return;
+    }
+
     const dateString = date.toISOString().split('T')[0];
 
     console.log('Salvando ganho:', {
       date: dateString,
       appId: selectedApp.id,
+      vehicleId: selectedVehicle.id,
       kmDriven: km,
       grossEarnings: earnings,
       hoursWorked: hours,
       extraExpenses: expenses || 0
     });
+
+    const variableCosts = [];
+    if (expenses > 0) {
+      variableCosts.push({
+        id: Date.now().toString(),
+        type: 'outros',
+        value: expenses,
+        description: 'Gastos Extras'
+      });
+    }
 
     onSave({
       date: dateString,
@@ -187,8 +222,9 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
       kmDriven: km,
       grossEarnings: earnings,
       hoursWorked: hours,
-      extraExpenses: expenses || 0,
-      variableCosts: [] // Inicializar com array vazio como padrão
+      extraExpenses: expenses || 0, // Mantendo por compatibilidade se necessário, mas o real vai em variableCosts
+      variableCosts: variableCosts,
+      vehicleId: selectedVehicle.id
     });
 
     handleClose();
@@ -214,7 +250,85 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
     });
   };
 
-  // Função para renderizar o seletor de apps de ganho
+  // --- Render Functions ---
+
+  const renderVehicleSelector = () => {
+    const activeVehicles = data.vehicles;
+    // const activeVehicles = data.vehicles.filter(v => v.active); // Se quiser filtrar apenas ativos
+    const selectedVehicle = data.vehicles.find(v => v.id === vehicleId);
+
+    if (activeVehicles.length === 0) {
+      return (
+        <View style={styles.fieldContainer}>
+          <Text style={styles.label}>Veículo *</Text>
+          <View style={[styles.input, styles.disabledInput]}>
+            <Text style={styles.disabledInputText}>Nenhum veículo encontrado</Text>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.fieldContainer}>
+        <Text style={styles.label}>Veículo *</Text>
+        <TouchableOpacity
+          style={[styles.appSelector, !selectedVehicle && styles.appSelectorError]}
+          onPress={() => setShowVehicleSelector(true)}
+        >
+          {selectedVehicle ? (
+            <View style={styles.selectedAppContainer}>
+              <MaterialIcons name={selectedVehicle.type === 'moto' ? 'two-wheeler' : 'directions-car'} size={20} color="#4B5563" style={{ marginRight: 8 }} />
+              <Text style={styles.selectedAppText}>{selectedVehicle.brand} {selectedVehicle.model}</Text>
+              <MaterialIcons name="arrow-drop-down" size={24} color="#6B7280" />
+            </View>
+          ) : (
+            <View style={styles.placeholderContainer}>
+              <Text style={styles.placeholderText}>Selecione um veículo</Text>
+              <MaterialIcons name="arrow-drop-down" size={24} color="#6B7280" />
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const renderVehicleSelectorModal = () => {
+    if (!showVehicleSelector) return null;
+    const activeVehicles = data.vehicles.filter(v => v.active);
+
+    return (
+      <Modal visible={showVehicleSelector} transparent animationType="fade" onRequestClose={() => setShowVehicleSelector(false)}>
+        <TouchableOpacity style={styles.appSelectorOverlay} onPress={() => setShowVehicleSelector(false)}>
+          <View style={styles.appSelectorModal}>
+            <View style={styles.appSelectorHeader}>
+              <Text style={styles.appSelectorTitle}>Selecione o Veículo</Text>
+              <TouchableOpacity onPress={() => setShowVehicleSelector(false)}>
+                <MaterialIcons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={activeVehicles}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.appItem, vehicleId === item.id && styles.appItemSelected]}
+                  onPress={() => {
+                    setVehicleId(item.id);
+                    setShowVehicleSelector(false);
+                  }}
+                >
+                  <MaterialIcons name={item.type === 'moto' ? 'two-wheeler' : 'directions-car'} size={24} color={vehicleId === item.id ? '#00A85A' : '#6B7280'} style={{ marginRight: 12 }} />
+                  <Text style={styles.appName}>{item.brand} {item.model} ({item.plate})</Text>
+                  {vehicleId === item.id && <MaterialIcons name="check" size={20} color="#00A85A" />}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    );
+  };
+
   const renderAppSelector = () => {
     const activeApps = data.faturamentoApps.filter(app => app.isActive);
 
@@ -227,7 +341,7 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
           </View>
           <Text style={styles.appNote}>
             💡 Para registrar ganhos, você precisa ter pelo menos um app ativo.
-            Vá para a aba "Categorias" > "Apps de Ganho" para adicionar.
+            Vá para a aba "Categorias" {'>'} "Apps de Ganho" para adicionar.
           </Text>
         </View>
       );
@@ -264,7 +378,6 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
 
   const renderAppSelectorModal = () => {
     if (!showAppSelector) return null;
-
     const activeApps = data.faturamentoApps.filter(app => app.isActive);
 
     return (
@@ -396,8 +509,8 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
               key={index}
               style={[
                 styles.calendarDay,
-                day && isSelectedDate(day) && styles.calendarDaySelected,
-                day && isDateDisabled(day) && styles.calendarDayDisabled
+                (day !== null && isSelectedDate(day)) ? styles.calendarDaySelected : null,
+                (day !== null && isDateDisabled(day)) ? styles.calendarDayDisabled : null
               ]}
               onPress={() => {
                 if (day && !isDateDisabled(day)) {
@@ -474,6 +587,8 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
                 {renderCustomCalendar()}
               </View>
 
+              {renderVehicleSelector()}
+
               <View style={styles.fieldContainer}>
                 <Text style={styles.label}>KM rodado *</Text>
                 <TextInput
@@ -546,6 +661,7 @@ export default function EarningsModal({ visible, onClose, onSave, initialData, p
             </ScrollView>
 
             {renderAppSelectorModal()}
+            {renderVehicleSelectorModal()}
 
             <View style={styles.footer}>
               <TouchableOpacity onPress={handleClose} style={styles.cancelButton}>

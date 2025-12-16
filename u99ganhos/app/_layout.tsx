@@ -26,6 +26,12 @@ export default function RootLayout() {
         <Stack.Screen name="splash" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="configuracoes" options={{ headerShown: true, headerTitle: 'Configurações' }} />
+        <Stack.Screen name="manutencoes" options={{
+          headerShown: true,
+          headerTitle: 'Manutenções',
+          headerStyle: { backgroundColor: '#1F2937' },
+          headerTintColor: '#FFFFFF'
+        }} />
       </Stack>
     </FinanceProvider>
   );

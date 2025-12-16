@@ -29,6 +29,8 @@ export default function TrackerScreen() {
         getCurrentSessionDistance,
         getCurrentSessionDuration,
         getTrackerSessions,
+        deleteTrackerSession,
+        updateTrackerSession,
     } = useFinance();
 
     const [hasPermission, setHasPermission] = useState(false);
@@ -193,29 +195,49 @@ export default function TrackerScreen() {
         return '#EF4444'; // Poor
     };
 
+    const handleDeleteSession = (currItem: any) => {
+        Alert.alert(
+            'Excluir Percurso',
+            'Tem certeza que deseja excluir este percurso? Os ganhos e KMs associados ao veículo podem não ser revertidos automaticamente.',
+            [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                    text: 'Excluir',
+                    style: 'destructive',
+                    onPress: () => deleteTrackerSession(currItem.id)
+                }
+            ]
+        );
+    };
+
     const renderSessionItem = ({ item }: { item: any }) => (
-        <View style={styles.sessionCard}>
-            <View style={styles.sessionHeader}>
-                <View style={styles.sessionInfo}>
-                    <Text style={styles.sessionDate}>{formatDate(item.startTime)}</Text>
-                    {item.vehicleId && (
-                        <Text style={styles.sessionVehicle}>
-                            {data.vehicles.find(v => v.id === item.vehicleId)?.model || 'Veículo'}
-                        </Text>
-                    )}
+        <TouchableOpacity
+            onLongPress={() => handleDeleteSession(item)}
+            activeOpacity={0.7}
+        >
+            <View style={styles.sessionCard}>
+                <View style={styles.sessionHeader}>
+                    <View style={styles.sessionInfo}>
+                        <Text style={styles.sessionDate}>{formatDate(item.startTime)}</Text>
+                        {item.vehicleId && (
+                            <Text style={styles.sessionVehicle}>
+                                {data.vehicles.find(v => v.id === item.vehicleId)?.model || 'Veículo'}
+                            </Text>
+                        )}
+                    </View>
+                    <View style={styles.sessionStats}>
+                        <Text style={styles.sessionDistance}>{item.totalDistanceKm.toFixed(2)} km</Text>
+                        <Text style={styles.sessionDuration}>{formatDuration(item.duration)}</Text>
+                    </View>
                 </View>
-                <View style={styles.sessionStats}>
-                    <Text style={styles.sessionDistance}>{item.totalDistanceKm.toFixed(2)} km</Text>
-                    <Text style={styles.sessionDuration}>{formatDuration(item.duration)}</Text>
-                </View>
+                {item.autoSaved && (
+                    <View style={styles.savedBadge}>
+                        <MaterialIcons name="check-circle" size={14} color="#10B981" />
+                        <Text style={styles.savedText}>Salvo automaticamente</Text>
+                    </View>
+                )}
             </View>
-            {item.autoSaved && (
-                <View style={styles.savedBadge}>
-                    <MaterialIcons name="check-circle" size={14} color="#10B981" />
-                    <Text style={styles.savedText}>Salvo automaticamente</Text>
-                </View>
-            )}
-        </View>
+        </TouchableOpacity>
     );
 
     const isTracking = data.activeSession?.status === 'active';

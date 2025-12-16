@@ -118,10 +118,8 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* GPS Tracker Widget */}
         <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
           <TrackerWidget />
-          <TrackerHistory />
         </View>
 
         {/* Meta Diária */}
@@ -186,6 +184,11 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/* GPS Tracker History (Last) */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 80 }}>
+          <TrackerHistory />
+        </View>
+
         <ProfitConfigModal
           visible={profitModalVisible}
           onClose={() => setProfitModalVisible(false)}
@@ -211,7 +214,7 @@ export default function HomeScreen() {
       </ScrollView>
 
       {/* Floating Action Button for GPS Tracker */}
-      <TrackerFAB />
+
     </View>
   );
 }

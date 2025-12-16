@@ -26,13 +26,13 @@ const CATEGORY_TYPES = [
   { key: 'emergency', label: 'Emergência', color: '#DC143C', description: 'Imprevistos e reparos' }
 ] as const;
 
-export default function CategoryModal({ 
-  visible, 
-  onClose, 
-  onSave, 
-  initialName = '', 
-  initialType = 'fixed',
-  title 
+export default function CategoryModal({
+  visible,
+  onClose,
+  onSave,
+  initialName = '',
+  initialType = 'variable',
+  title
 }: CategoryModalProps) {
   const [name, setName] = useState(initialName);
   const [selectedType, setSelectedType] = useState<'fixed' | 'variable' | 'emergency'>(initialType);
@@ -94,39 +94,10 @@ export default function CategoryModal({
                 style={styles.input}
                 value={name}
                 onChangeText={setName}
-                placeholder="Digite o nome da categoria"
+                placeholder="Exim: Combustível, Alimentação..."
                 placeholderTextColor="#9CA3AF"
                 autoFocus
               />
-
-              <Text style={[styles.label, { marginTop: 20 }]}>Tipo de Categoria</Text>
-              <View style={styles.typeContainer}>
-                {CATEGORY_TYPES.map((type) => (
-                  <TouchableOpacity
-                    key={type.key}
-                    style={[
-                      styles.typeOption,
-                      selectedType === type.key && styles.typeOptionSelected,
-                      { borderColor: type.color }
-                    ]}
-                    onPress={() => setSelectedType(type.key)}
-                  >
-                    <View style={[styles.typeIndicator, { backgroundColor: type.color }]} />
-                    <View style={styles.typeInfo}>
-                      <Text style={[
-                        styles.typeLabel,
-                        selectedType === type.key && styles.typeLabelSelected
-                      ]}>
-                        {type.label}
-                      </Text>
-                      <Text style={styles.typeDescription}>{type.description}</Text>
-                    </View>
-                    {selectedType === type.key && (
-                      <MaterialIcons name="check-circle" size={20} color={type.color} />
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
             </View>
 
             <View style={styles.footer}>
@@ -147,7 +118,7 @@ export default function CategoryModal({
             <View style={styles.alertModal}>
               <Text style={styles.alertTitle}>{alertConfig.title}</Text>
               <Text style={styles.alertMessage}>{alertConfig.message}</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.alertButton}
                 onPress={() => setAlertConfig(prev => ({ ...prev, visible: false }))}
               >

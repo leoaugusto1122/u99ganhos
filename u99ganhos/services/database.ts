@@ -46,6 +46,7 @@ const db = {
 
 export const databaseService = {
     // Initialize Database Tables
+    withTransactionSync: (callback: () => void) => db.withTransactionSync(callback),
     initDatabase: () => {
         db.execSync(`
       PRAGMA foreign_keys = ON;
@@ -171,6 +172,12 @@ export const databaseService = {
         createdAt TEXT,
         FOREIGN KEY (vehicleId) REFERENCES vehicles(id)
       );
+
+      CREATE TABLE IF NOT EXISTS work_schedules (
+        id TEXT PRIMARY KEY DEFAULT 'current',
+        workDays TEXT, -- JSON
+        summary TEXT -- JSON
+      );
     `);
         console.log('Database initialized successfully');
     },
@@ -189,29 +196,34 @@ export const databaseService = {
             DELETE FROM maintenances;
             DELETE FROM vehicles;
             DELETE FROM categories;
+            DELETE FROM work_schedules;
         `);
     },
 
     // --- BACKUP & RESTORE ---
 
     getAllDataAsJSON: (): BackupData => {
-        // Fetch all data using existing methods
         const categories = databaseService.getCategories();
         const vehicles = databaseService.getVehicles();
         const maintenances = databaseService.getMaintenances();
-        const costs = databaseService.getCosts();
         const costConfigs = databaseService.getCostConfigs();
-        const earningsRecords = databaseService.getEarnings();
+        const costs = databaseService.getCosts();
+        const earningsRecords = databaseService.getEarningsRecords();
         const kmTrackerSessions = databaseService.getKMSessions();
 
-        // Settings are stored individually, need to fetch manually or specific ones
-        // We will fetch known settings
-        const workSchedule = databaseService.getSetting<any>('workSchedule', null);
-        const profitSettings = databaseService.getSetting<any>('profitSettings', null);
-        const faturamentoApps = databaseService.getSetting<any>('faturamentoApps', null);
+        let profitSettings = { isEnabled: false, profitPercentage: 0 };
+        try {
+            const row = db.getFirstSync("SELECT value FROM settings WHERE key = 'profitSettings'");
+            if (row) profitSettings = JSON.parse((row as any).value);
+        } catch (e) { }
 
-        // Construct FinanceData-like object, but we need strictly serializable data
-        // Our types are mostly serializable.
+        // FaturamentoApps?
+        const faturamentoApps: FaturamentoApp[] = []; // Placeholder
+
+        const workSchedule = databaseService.getWorkSchedule() || {
+            workDays: [],
+            summary: { daysPerWeek: 0, hoursPerWeek: 0, daysPerMonth: 0, hoursPerMonth: 0 }
+        };
 
         return {
             version: 1,
@@ -220,15 +232,14 @@ export const databaseService = {
                 categories,
                 vehicles,
                 maintenances,
-                costs,
                 costConfigs,
+                costs,
                 earningsRecords,
                 kmTrackerSessions,
-                workSchedule, // might be null if not set, handled by import
-                profitSettings,
                 faturamentoApps,
-                activeSession: undefined // Don't backup active session state, or maybe yes? Safe to skip.
-            } as any // Cast to avoid strict activeSession mismatch if needed
+                profitSettings,
+                workSchedule
+            }
         };
     },
 
@@ -239,29 +250,34 @@ export const databaseService = {
 
         const { data } = backup;
 
-        // Transactional import: Clear then Insert
-        db.withTransactionSync(() => {
-            // 1. Clear existing
-            databaseService.clearAllData();
+        // Disable Foreign Keys during restore to prevent constraint issues
+        try {
+            db.execSync('PRAGMA foreign_keys = OFF;');
 
-            // 2. Insert Settings
-            if (data.workSchedule) databaseService.saveSetting('workSchedule', data.workSchedule);
-            if (data.profitSettings) databaseService.saveSetting('profitSettings', data.profitSettings);
-            if (data.faturamentoApps) databaseService.saveSetting('faturamentoApps', data.faturamentoApps);
+            // Transactional import: Clear then Insert
+            db.withTransactionSync(() => {
+                // 1. Clear existing
+                databaseService.clearAllData();
 
-            // 3. Insert Entities
-            data.categories.forEach(c => databaseService.addCategory(c));
-            data.vehicles.forEach(v => databaseService.addVehicle(v));
-            data.maintenances.forEach(m => databaseService.addMaintenance(m)); // Handles history? addMaintenance does NOT add history array automatically in my implementation?
-            // Wait, my addMaintenance implementation DOES check m.completionHistory! (lines 297-301)
-            // So if backup includes history in the maintenance object (getMaintenances DOES includes it), it works!
+                // 2. Insert Settings
+                if (data.workSchedule) databaseService.saveWorkSchedule(data.workSchedule);
+                if (data.profitSettings) databaseService.saveSetting('profitSettings', data.profitSettings);
+                if (data.faturamentoApps) databaseService.saveSetting('faturamentoApps', data.faturamentoApps);
 
-            data.costConfigs.forEach(c => databaseService.addCostConfig(c));
-            data.costs.forEach(c => databaseService.addCost(c));
-            data.earningsRecords.forEach(e => databaseService.addEarningsRecord(e));
-            data.kmTrackerSessions.forEach(s => databaseService.addKMSession(s));
-
-        });
+                // 3. Insert Entities
+                data.categories.forEach(c => databaseService.addCategory(c));
+                data.vehicles.forEach(v => databaseService.addVehicle(v));
+                data.maintenances.forEach(m => databaseService.addMaintenance(m));
+                data.costConfigs.forEach(c => databaseService.addCostConfig(c));
+                data.costs.forEach(c => databaseService.addCost(c));
+                data.earningsRecords.forEach(e => databaseService.addEarningsRecord(e));
+                if (data.kmTrackerSessions) {
+                    data.kmTrackerSessions.forEach(s => databaseService.addKMSession(s));
+                }
+            });
+        } finally {
+            db.execSync('PRAGMA foreign_keys = ON;');
+        }
     },
 
     // --- SETTINGS (Apps, Profile, etc) ---
@@ -284,7 +300,6 @@ export const databaseService = {
     // --- CATEGORIES ---
     getCategories: (): Category[] => {
         const rows = db.getAllSync<Category>('SELECT * FROM categories');
-        // Convert boolean/integer if needed, assuming simple mapping works or manual map
         return rows.map(r => ({
             ...r,
             active: Boolean(r.active)
@@ -294,7 +309,7 @@ export const databaseService = {
     addCategory: (category: Category) => {
         db.runSync(
             'INSERT INTO categories (id, name, active, createdAt) VALUES (?, ?, ?, ?)',
-            [category.id, category.name, category.active ? 1 : 0, category.createdAt.toISOString()]
+            [category.id, category.name, category.active ? 1 : 0, typeof category.createdAt === 'string' ? category.createdAt : category.createdAt.toISOString()]
         );
     },
 
@@ -328,7 +343,7 @@ export const databaseService = {
                 vehicle.currentKm,
                 vehicle.active ? 1 : 0,
                 vehicle.lastKmUpdate,
-                vehicle.createdAt.toISOString()
+                typeof vehicle.createdAt === 'string' ? vehicle.createdAt : vehicle.createdAt.toISOString()
             ]
         );
     },
@@ -386,7 +401,7 @@ export const databaseService = {
                 m.id, m.vehicleId, m.name, m.description || null, m.category || null,
                 m.intervalKm || null, m.intervalDays || null, m.lastKm || null, m.lastDate || null,
                 m.nextKm || null, m.nextDate || null, m.status, m.estimatedCost || null,
-                m.active ? 1 : 0, m.createdAt.toISOString()
+                m.active ? 1 : 0, typeof m.createdAt === 'string' ? m.createdAt : m.createdAt.toISOString()
             ]
         );
 
@@ -427,7 +442,7 @@ export const databaseService = {
         db.runSync(
             `INSERT INTO maintenance_history (id, maintenanceId, date, km, costId, notes, createdAt)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [h.id, maintenanceId, h.date, h.km, h.costId || null, h.notes || null, h.createdAt.toISOString()]
+            [h.id, maintenanceId, h.date, h.km, h.costId || null, h.notes || null, typeof h.createdAt === 'string' ? h.createdAt : h.createdAt.toISOString()]
         );
     },
 
@@ -437,9 +452,6 @@ export const databaseService = {
         return rows.map(c => ({
             ...c,
             isFixed: Boolean(c.isFixed),
-            // Need to join logic? For simple list, we usually need categoryName.
-            // In Context we might enrich this.
-            // For now, raw data.
         }));
     },
 
@@ -459,7 +471,7 @@ export const databaseService = {
             [
                 cost.id, cost.categoryId, cost.vehicleId || null, cost.configId || null,
                 cost.value, cost.description || null, cost.date, cost.typeSnapshot,
-                cost.isFixed ? 1 : 0, cost.createdAt.toISOString()
+                cost.isFixed ? 1 : 0, typeof cost.createdAt === 'string' ? cost.createdAt : cost.createdAt.toISOString()
             ]
         );
     },
@@ -479,7 +491,7 @@ export const databaseService = {
                 config.description || null, config.startDate,
                 config.active ? 1 : 0, config.intervalKm || null, config.intervalDays || null,
                 config.installmentsTotal || null, config.installmentsPaid || null,
-                config.lastKm || null, config.lastDate || null, config.createdAt.toISOString()
+                config.lastKm || null, config.lastDate || null, typeof config.createdAt === 'string' ? config.createdAt : config.createdAt.toISOString()
             ]
         );
     },
@@ -505,12 +517,11 @@ export const databaseService = {
     },
 
     // --- EARNINGS ---
-    getEarnings: (): EarningsRecord[] => {
+    getEarningsRecords: (): EarningsRecord[] => {
         const rows = db.getAllSync<any>('SELECT * FROM earnings_records');
         return rows.map(r => ({
             ...r,
             variableCosts: JSON.parse(r.variableCosts || '[]'),
-            // Ensure types match
         }));
     },
 
@@ -524,7 +535,7 @@ export const databaseService = {
                 record.id, record.date, record.appId, record.appName,
                 record.grossEarnings, record.netEarnings, record.totalVariableCosts,
                 JSON.stringify(record.variableCosts), record.hoursWorked || null,
-                record.kmDriven || null, record.createdAt.toISOString()
+                record.kmDriven || null, typeof record.createdAt === 'string' ? record.createdAt : record.createdAt.toISOString()
             ]
         );
     },
@@ -577,7 +588,7 @@ export const databaseService = {
                 session.id, session.vehicleId || null, session.startTime, session.endTime || null,
                 session.status, session.totalDistanceKm, session.duration, session.maxSpeed || null,
                 session.avgSpeed || null, session.autoSaved ? 1 : 0,
-                JSON.stringify(session.gpsPoints), session.createdAt.toISOString()
+                JSON.stringify(session.gpsPoints), typeof session.createdAt === 'string' ? session.createdAt : session.createdAt.toISOString()
             ]
         );
     },
@@ -608,5 +619,27 @@ export const databaseService = {
 
     deleteKMSession: (id: string) => {
         db.runSync('DELETE FROM km_tracker_sessions WHERE id = ?', [id]);
-    }
+    },
+
+    // --- WORK SCHEDULE ---
+    saveWorkSchedule: (schedule: WorkSchedule) => {
+        db.runSync(
+            `INSERT OR REPLACE INTO work_schedules (id, workDays, summary) VALUES ('current', ?, ?)`,
+            [JSON.stringify(schedule.workDays), JSON.stringify(schedule.summary)]
+        );
+    },
+
+    getWorkSchedule: (): WorkSchedule | null => {
+        try {
+            const row = db.getFirstSync(`SELECT * FROM work_schedules WHERE id = 'current'`);
+            if (!row) return null;
+            return {
+                workDays: JSON.parse((row as any).workDays),
+                summary: JSON.parse((row as any).summary)
+            };
+        } catch (error) {
+            console.error('Error fetching work schedule:', error);
+            return null;
+        }
+    },
 };

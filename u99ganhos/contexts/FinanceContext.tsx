@@ -58,6 +58,7 @@ interface FinanceContextType {
   getCurrentSessionDuration: () => number;
   getTrackerSessions: (vehicleId?: string) => KMTrackerSession[];
   deleteTrackerSession: (sessionId: string) => void;
+  updateTrackerSession: (sessionId: string, updates: Partial<KMTrackerSession>) => void;
 
   // Costs (History & Config)
   addCost: (
@@ -115,6 +116,16 @@ interface FinanceContextType {
   resetApp: () => Promise<boolean>;
   backupData: () => Promise<void>;
   restoreData: () => Promise<void>;
+
+  // Permissions & Settings
+  permissions: {
+    location: boolean;
+    notifications: boolean;
+    storage: boolean;
+  };
+  checkPermissions: () => Promise<void>;
+  requestPermissions: (type: 'location' | 'notifications' | 'storage') => Promise<boolean>;
+  configureBackupFolder: () => Promise<boolean>;
 }
 
 const DAYS_OF_WEEK = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
@@ -149,12 +160,27 @@ const defaultFaturamentoApps: FaturamentoApp[] = [
   { id: '5', name: 'Blablacar', color: '#00AFF5', icon: '🚙', isActive: true, createdAt: new Date() },
 ];
 
+// Default Categories
+const defaultCategories: Category[] = [
+  { id: 'def_1', name: 'Combustível', active: true, createdAt: new Date() },
+  { id: 'def_2', name: 'Manutenção', active: true, createdAt: new Date() },
+  { id: 'def_3', name: 'Alimentação', active: true, createdAt: new Date() },
+  { id: 'def_4', name: 'IPVA', active: true, createdAt: new Date() },
+  { id: 'def_5', name: 'Seguro', active: true, createdAt: new Date() },
+  { id: 'def_6', name: 'Limpeza', active: true, createdAt: new Date() },
+];
+
 import { databaseService } from '@/services/database';
 import { notificationService } from '@/services/notificationService';
 import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
+// Use legacy API to avoid deprecation errors with writeAsStringAsync
+import * as FileSystem from 'expo-file-system/legacy';
+const { StorageAccessFramework } = FileSystem;
 import * as DocumentPicker from 'expo-document-picker';
-import { Alert } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import * as Location from 'expo-location';
+import { Alert, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
@@ -188,15 +214,22 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   const loadData = () => {
     try {
-      const categories = databaseService.getCategories();
+      let categories = databaseService.getCategories();
+
+      // Seed defaults if empty
+      if (categories.length === 0) {
+        defaultCategories.forEach(c => databaseService.addCategory(c));
+        categories = databaseService.getCategories(); // Reload
+      }
+
       const vehicles = databaseService.getVehicles();
       const maintenances = databaseService.getMaintenances();
       const costs = databaseService.getCosts();
       const costConfigs = databaseService.getCostConfigs();
-      const earningsRecords = databaseService.getEarnings();
+      const earningsRecords = databaseService.getEarningsRecords();
       const kmTrackerSessions = databaseService.getKMSessions();
 
-      const workSchedule = databaseService.getSetting<WorkSchedule>('workSchedule', initialWorkSchedule);
+      const workSchedule = databaseService.getWorkSchedule() || initialWorkSchedule;
       const profitSettings = databaseService.getSetting<ProfitSettings>('profitSettings', initialProfitSettings);
       const faturamentoApps = databaseService.getSetting<FaturamentoApp[]>('faturamentoApps', defaultFaturamentoApps);
 
@@ -358,9 +391,19 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (!vehicle) return;
 
     try {
-      // 1. Update Vehicle DB
+      // 1. Update Vehicle DB FIRST to ensure persistence
       const lastKmUpdate = new Date().toISOString();
-      databaseService.updateVehicle(id, { currentKm: km, lastKmUpdate });
+      // Ensure we are sending numbers
+      const safeKm = Number(km);
+      if (isNaN(safeKm) || safeKm < 0) return;
+
+      databaseService.updateVehicle(id, { currentKm: safeKm, lastKmUpdate });
+
+      // Update State immediately for responsiveness
+      setData(prev => ({
+        ...prev,
+        vehicles: prev.vehicles.map(v => v.id === id ? { ...v, currentKm: safeKm, lastKmUpdate } : v)
+      }));
 
       const generatedCosts: Cost[] = [];
       const updatedCostConfigs: CostConfig[] = []; // Track to update state
@@ -409,9 +452,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         }
       });
 
-      // Update State
+      // Final State Update
       setData(prev => {
-        // Merge logic
         const newCostConfigs = prev.costConfigs.map(c => {
           const updated = updatedCostConfigs.find(uc => uc.id === c.id);
           return updated || c;
@@ -422,11 +464,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           return updated || m;
         });
 
-        const newVehicles = prev.vehicles.map(v => v.id === id ? { ...v, currentKm: km, lastKmUpdate } : v);
-
         return {
           ...prev,
-          vehicles: newVehicles,
           costs: [...prev.costs, ...generatedCosts],
           costConfigs: newCostConfigs,
           maintenances: newMaintenances
@@ -861,6 +900,18 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     } catch (e) { console.error(e) }
   };
 
+  const updateTrackerSession = (sessionId: string, updates: Partial<KMTrackerSession>) => {
+    try {
+      databaseService.updateKMSession(sessionId, updates);
+      setData(prev => ({
+        ...prev,
+        kmTrackerSessions: prev.kmTrackerSessions.map(s => s.id === sessionId ? { ...s, ...updates } : s)
+      }));
+    } catch (e) {
+      console.error("Failed to update tracker session", e);
+    }
+  };
+
   // --- Costs ---
 
   const addCost = (
@@ -919,9 +970,19 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       // Handle Installments: Generate Future Records immediately
       if (type === 'installments' && configOptions?.installments) {
         newConfig.installmentsPaid = 1; // 1st is newCost
+
+        const startDateObj = new Date(date + 'T12:00:00'); // Use noon to avoid timezone shift issues on pure dates
+
         for (let i = 1; i < configOptions.installments; i++) {
-          const nextDate = new Date(date);
-          nextDate.setMonth(nextDate.getMonth() + i);
+          const nextDate = new Date(startDateObj);
+          // Safer month addition
+          nextDate.setMonth(startDateObj.getMonth() + i);
+
+          // Handle month rollover (e.g., Jan 31 -> Feb 28/29)
+          if (nextDate.getDate() !== startDateObj.getDate()) {
+            nextDate.setDate(0); // Set to last day of previous month (which is the correct month target)
+          }
+
           additionalCosts.push({
             id: baseId + '_' + i,
             configId: newConfig.id,
@@ -944,19 +1005,31 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      databaseService.addCost(newCost);
-      additionalCosts.forEach(c => databaseService.addCost(c));
-      if (newConfig) {
-        databaseService.addCostConfig(newConfig);
-      }
+      databaseService.withTransactionSync(() => {
+        // 1. Insert Config FIRST (Parent)
+        if (newConfig) {
+          databaseService.addCostConfig(newConfig);
+        }
 
-      setData(prev => ({
-        ...prev,
-        costs: [...prev.costs, newCost, ...additionalCosts],
-        costConfigs: newConfig ? [...prev.costConfigs, newConfig] : prev.costConfigs
-      }));
+        // 2. Insert Cost(s) SECOND (Children referencing Config)
+        databaseService.addCost(newCost);
+        additionalCosts.forEach(c => databaseService.addCost(c));
+      });
+
+      setData(prev => {
+        // Prevent duplicate keys in state UI (Safety check)
+        const isDuplicate = prev.costs.some(c => c.id === newCost.id);
+        if (isDuplicate) return prev;
+
+        return {
+          ...prev,
+          costs: [...prev.costs, newCost, ...additionalCosts],
+          costConfigs: newConfig ? [...prev.costConfigs, newConfig] : prev.costConfigs
+        };
+      });
     } catch (e) {
       console.error("Failed to add cost", e);
+      Alert.alert("Erro", "Falha ao salvar custo. Verifique os dados.");
     }
   };
 
@@ -1124,23 +1197,58 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   };
 
   const updateWorkDay = (dayIndex: number, enabled: boolean, hours = 4) => {
-    setData(prev => ({ ...prev, workSchedule: { ...prev.workSchedule, workDays: prev.workSchedule.workDays.map((day, index) => index === dayIndex ? { ...day, enabled, hours: enabled ? hours : 4 } : day) } }));
+    setData(prev => {
+      const updatedDays = prev.workSchedule.workDays.map((day, index) => index === dayIndex ? { ...day, enabled, hours: enabled ? hours : 4 } : day);
+      const newSchedule = { ...prev.workSchedule, workDays: updatedDays };
+
+      // Auto-save to DB for immediate feedback loop or wait for explicit save?
+      // Better to save to DB to avoid data loss.
+      // But summary update happens in saveWorkSchedule. 
+      // We'll leave summary stale until saveWorkSchedule is called? 
+      // Or we should update summary here too? 
+      // Let's just persist the days change.
+      databaseService.saveWorkSchedule(newSchedule);
+
+      return { ...prev, workSchedule: newSchedule };
+    });
   };
 
   const saveWorkSchedule = () => {
+    // This function seems to be intended to Recalculate Summary AND Save.
+    // However, it relies on 'data' which might be stale if called immediately after updateWorkDay without waiting for render.
+    // Better to use functional update to be safe, but 'data' usage inside might be tricky.
+    // Assuming this is called via button press, 'data' should be fresh.
+
     const enabledDays = data.workSchedule.workDays.filter(day => day.enabled);
     const daysPerWeek = enabledDays.length;
     const hoursPerWeek = enabledDays.reduce((total, day) => total + day.hours, 0);
     const daysPerMonth = Math.round(daysPerWeek * 4.33);
     const hoursPerMonth = Math.round(hoursPerWeek * 4.33);
-    setData(prev => ({ ...prev, workSchedule: { ...prev.workSchedule, summary: { daysPerWeek, hoursPerWeek, daysPerMonth, hoursPerMonth } } }));
+
+    const newSummary = { daysPerWeek, hoursPerWeek, daysPerMonth, hoursPerMonth };
+
+    setData(prev => {
+      const updatedSchedule = { ...prev.workSchedule, summary: newSummary };
+      databaseService.saveWorkSchedule(updatedSchedule);
+      return { ...prev, workSchedule: updatedSchedule };
+    });
   };
 
   const addEarningsRecord = (record: Omit<EarningsRecord, 'id' | 'createdAt' | 'totalVariableCosts' | 'netEarnings'>) => {
     const totalVariableCosts = record.variableCosts?.reduce((sum, cost) => sum + cost.value, 0) || 0;
     const netEarnings = record.grossEarnings - totalVariableCosts;
     const app = data.faturamentoApps.find(app => app.id === record.appId);
-    const newRecord: EarningsRecord = { ...record, appName: app?.name || 'App Desconhecido', totalVariableCosts, netEarnings, id: Date.now().toString(), createdAt: new Date() };
+
+    // Ensure vehicleId is preserved
+    const newRecord: EarningsRecord = {
+      ...record,
+      appName: app?.name || 'App Desconhecido',
+      totalVariableCosts,
+      netEarnings,
+      id: Date.now().toString(),
+      createdAt: new Date(),
+      vehicleId: record.vehicleId // Explicitly preserve vehicleId
+    };
 
     // DB: Add Earnings
     try {
@@ -1153,18 +1261,22 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
       const kmDriven = record.kmDriven || 0;
       if (kmDriven > 0) {
-        const activeVehicle = data.vehicles.find(v => v.active);
-        if (activeVehicle) {
-          const newKm = activeVehicle.currentKm + kmDriven;
+        // Use provided vehicleId OR fallback to active vehicle
+        const targetVehicleId = record.vehicleId || data.vehicles.find(v => v.active)?.id;
+        const vehicleToUpdate = data.vehicles.find(v => v.id === targetVehicleId);
+
+        if (vehicleToUpdate) {
+          const newKm = vehicleToUpdate.currentKm + kmDriven;
           const lastKmUpdate = new Date().toISOString();
 
           // DB: Update Vehicle
-          databaseService.updateVehicle(activeVehicle.id, { currentKm: newKm, lastKmUpdate });
+          databaseService.updateVehicle(vehicleToUpdate.id, { currentKm: newKm, lastKmUpdate });
 
           // Maintenance Trigger Logic (Reused)
           const generatedCosts: Cost[] = [];
           updatedCostConfigs = data.costConfigs.map(config => {
-            if (config.vehicleId === activeVehicle.id && config.active && config.type === 'km_based' && config.intervalKm) {
+            // Check config against the SPECIFIC vehicle
+            if (config.vehicleId === vehicleToUpdate.id && config.active && config.type === 'km_based' && config.intervalKm) {
               const lastKm = config.lastKm || 0;
               if (newKm >= lastKm + config.intervalKm) {
                 const category = data.categories.find(c => c.id === config.categoryId);
@@ -1173,7 +1285,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
                   configId: config.id,
                   categoryId: config.categoryId,
                   categoryName: category?.name || 'Manutenção',
-                  vehicleId: activeVehicle.id,
+                  vehicleId: vehicleToUpdate.id,
                   value: config.value,
                   description: `Manutenção Automática: ${config.description || 'KM atingido'} `,
                   date: new Date().toISOString().split('T')[0],
@@ -1192,7 +1304,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           });
 
           updatedVehicles = data.vehicles.map(v =>
-            v.id === activeVehicle.id
+            v.id === vehicleToUpdate.id
               ? { ...v, currentKm: newKm, lastKmUpdate }
               : v
           );
@@ -1200,7 +1312,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           newCosts = [...data.costs, ...generatedCosts];
 
           updatedMaintenances = data.maintenances.map(m => {
-            if (m.vehicleId === activeVehicle.id) {
+            if (m.vehicleId === vehicleToUpdate.id) {
               const newStatus = calculateMaintenanceStatus(m, newKm);
               if (newStatus !== m.status) {
                 databaseService.updateMaintenance(m.id, { status: newStatus }); // DB Write Maintenance
@@ -1253,7 +1365,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       // Or better: `databaseService.updateEarningsRecord` IS CALLED assuming I'll implement it.
 
       const updates = { ...record, appName: app?.name, totalVariableCosts, netEarnings };
-      // databaseService.updateEarningsRecord(id, updates); // Commented out until implemented
+      databaseService.updateEarningsRecord(id, updates);
 
       setData(prev => ({ ...prev, earningsRecords: prev.earningsRecords.map(existing => existing.id === id ? { ...existing, ...updates, appName: app?.name || existing.appName } : existing) }));
     } catch (e) {
@@ -1337,11 +1449,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const missingTypes: string[] = [];
 
     // Check Work Schedule (Optional now - user requested to focus on Vehicle)
-    // const hasWorkSchedule = data.workSchedule.workDays.some(day => day.enabled && day.hours > 0);
-    // if (!hasWorkSchedule) {
-    //   missingItems.push('• É necessário configurar os dias e horários de trabalho.');
-    //   missingTypes.push('schedule');
-    // }
+    const hasWorkSchedule = data.workSchedule.workDays.some(day => day.enabled && day.hours > 0);
+    if (!hasWorkSchedule) {
+      missingItems.push('• É necessário configurar os dias e horários de trabalho.');
+      missingTypes.push('schedule');
+    }
 
     // Check Vehicle
     const hasActiveVehicle = data.vehicles.some(v => v.active);
@@ -1410,6 +1522,94 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     return { percentage, isAchieved };
   };
 
+  // --- Permissions ---
+  const [permissions, setPermissions] = useState({
+    location: false,
+    notifications: false,
+    storage: false
+  });
+
+  const [backupDir, setBackupDir] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Load persisted backup dir
+    AsyncStorage.getItem('backup_dir_uri').then(uri => {
+      if (uri) setBackupDir(uri);
+    });
+    checkPermissions();
+  }, []);
+
+  const checkPermissions = async () => {
+    try {
+      // Location
+      const { status: locStatus } = await Location.getForegroundPermissionsAsync();
+
+      // Notifications
+      const { status: notifStatus } = await Notifications.getPermissionsAsync();
+
+      // Storage (heuristic: if we have a backupDir, assume granted for SAF)
+      const storageGranted = !!backupDir;
+
+      setPermissions({
+        location: locStatus === 'granted',
+        notifications: notifStatus === 'granted', // Update when using real notifications
+        storage: storageGranted
+      });
+    } catch (e) {
+      console.log('Error checking permissions', e);
+    }
+  };
+
+  const requestPermissions = async (type: 'location' | 'notifications' | 'storage'): Promise<boolean> => {
+    try {
+      if (type === 'location') {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        const granted = status === 'granted';
+        setPermissions(p => ({ ...p, location: granted }));
+        return granted;
+      }
+
+      if (type === 'storage') {
+        // For storage, we trigger the folder configuration
+        return await configureBackupFolder();
+      }
+
+      if (type === 'notifications') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        const granted = status === 'granted';
+        setPermissions(p => ({ ...p, notifications: granted }));
+        return granted;
+      }
+
+      return false;
+    } catch (e) {
+      console.error("Permission request failed", e);
+      return false;
+    }
+  };
+
+  const configureBackupFolder = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') {
+      Alert.alert('Info', 'Seleção de pasta automática disponível apenas no Android.');
+      return false;
+    }
+
+    try {
+      const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (permissions.granted) {
+        const uri = permissions.directoryUri;
+        setBackupDir(uri);
+        await AsyncStorage.setItem('backup_dir_uri', uri);
+        setPermissions(p => ({ ...p, storage: true }));
+        Alert.alert('Sucesso', 'Pasta de backup configurada! Os arquivos serão salvos lá automaticamente.');
+        return true;
+      }
+    } catch (e) {
+      console.error("Failed to config backup folder", e);
+    }
+    return false;
+  };
+
   // --- Backup, Restore & Reset ---
 
   const resetApp = async () => {
@@ -1441,9 +1641,28 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       const backup = databaseService.getAllDataAsJSON();
       const jsonString = JSON.stringify(backup, null, 2);
       const filename = `backup_u99ganhos_${new Date().toISOString().split('T')[0]}.json`;
-      // Use cacheDirectory for temporary file to share
-      const filePath = `${FileSystem.cacheDirectory}${filename}`;
 
+      if (Platform.OS === 'android' && backupDir) {
+        // Automatic save to configured folder via SAF
+        try {
+          // Create 'u99ganhos' -> 'backup' structure if possible?
+          // SAF gives access to the selected folder.
+          // We ideally want to create a file directly there.
+
+          // Check if file exists? SAF creates new file usually.
+          const newFileUri = await StorageAccessFramework.createFileAsync(backupDir, filename, 'application/json');
+          await FileSystem.writeAsStringAsync(newFileUri, jsonString, { encoding: 'utf8' });
+          Alert.alert('Backup Salvo', `Arquivo salvo em sua pasta configurada:\n${filename}`);
+          return;
+        } catch (e) {
+          console.error("SAF write failed", e);
+          Alert.alert('Erro', 'Falha ao salvar na pasta configurada. Vamos tentar compartilhar.');
+          // Fallback to sharing
+        }
+      }
+
+      // Fallback or iOS: Save to cache/document and Share
+      const filePath = `${(FileSystem as any).documentDirectory}${filename}`;
       await FileSystem.writeAsStringAsync(filePath, jsonString, { encoding: 'utf8' });
 
       if (await Sharing.isAvailableAsync()) {
@@ -1452,8 +1671,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         Alert.alert('Erro', 'Compartilhamento não disponível neste dispositivo.');
       }
     } catch (e) {
-      Alert.alert('Erro no Backup', 'Falha ao gerar arquivo de backup.');
-      console.error(e);
+      Alert.alert('Erro no Backup', 'Falha ao gerar arquivo de backup. Verifique as permissões.');
+      console.error("Backup failed", e);
     }
   };
 
@@ -1534,6 +1753,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       getCurrentSessionDuration,
       getTrackerSessions,
       deleteTrackerSession,
+      updateTrackerSession,
       addCost,
       deleteCost,
       getTotalMonthlyCosts,
@@ -1560,7 +1780,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       checkRequiredSettings,
       resetApp,
       backupData,
-      restoreData
+      restoreData,
+      permissions,
+      checkPermissions,
+      requestPermissions,
+      configureBackupFolder
     }}>
       {children}
     </FinanceContext.Provider>

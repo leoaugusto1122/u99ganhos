@@ -194,6 +194,7 @@ export interface EarningsRecord {
   netEarnings: number;
   hoursWorked?: number;
   kmDriven?: number;
+  vehicleId?: string;
   createdAt: Date;
 }
 

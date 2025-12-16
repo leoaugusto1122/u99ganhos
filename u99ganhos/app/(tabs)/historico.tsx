@@ -10,6 +10,7 @@ import {
   TextInput,
   ScrollView,
   LayoutAnimation,
+  Modal,
   UIManager
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -31,11 +32,33 @@ export default function HistoricoScreen() {
   // Custom Date State
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
+  const [appliedCustomDate, setAppliedCustomDate] = useState({ start: '', end: '' });
+  const [showCustomFilterModal, setShowCustomFilterModal] = useState(false);
 
   // Expanded Card State
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const { data, getRecordProgress, getTotalMonthlyCosts } = useFinance();
+
+  const handleApplyCustomFilter = () => {
+    if (customStartDate.length === 10 && customEndDate.length === 10) {
+      setAppliedCustomDate({ start: customStartDate, end: customEndDate });
+    } else {
+      Alert.alert('Data inválida', 'Preencha as datas no formato DD/MM/AAAA');
+    }
+  };
+
+  const formatInputDate = (text: string) => {
+    const cleaned = text.replace(/\D/g, '');
+    let formatted = cleaned;
+    if (cleaned.length > 2) {
+      formatted = cleaned.substring(0, 2) + '/' + cleaned.substring(2);
+    }
+    if (cleaned.length > 4) {
+      formatted = formatted.substring(0, 5) + '/' + formatted.substring(5, 9);
+    }
+    return formatted;
+  };
 
   const getDateRange = () => {
     const today = new Date();
@@ -49,18 +72,19 @@ export default function HistoricoScreen() {
         weekAgo.setDate(today.getDate() - 7);
         return { start: weekAgo.toISOString().split('T')[0], end: todayStr };
       case 'month':
+        // Standard "Month" view: Rolling 30 days
         const monthAgo = new Date(today);
-        monthAgo.setMonth(today.getMonth() - 1);
+        monthAgo.setDate(today.getDate() - 30);
         return { start: monthAgo.toISOString().split('T')[0], end: todayStr };
       case 'custom':
-        if (!customStartDate || !customEndDate) return { start: '', end: '' };
+        if (!appliedCustomDate.start || !appliedCustomDate.end) return { start: '', end: '' };
 
         // Convert DD/MM/YYYY to YYYY-MM-DD
         const parseDate = (d: string) => {
           const [day, month, year] = d.split('/');
           return `${year}-${month}-${day}`;
         };
-        return { start: parseDate(customStartDate), end: parseDate(customEndDate) };
+        return { start: parseDate(appliedCustomDate.start), end: parseDate(appliedCustomDate.end) };
       default:
         return { start: todayStr, end: todayStr };
     }
@@ -80,7 +104,6 @@ export default function HistoricoScreen() {
       if (selectedAppId) {
         earnings = earnings.filter(r => r.appId === selectedAppId);
       }
-      // Filter earnings strictly by date
       earnings = earnings.filter(r => r.date >= start && r.date <= end);
       records.push(...earnings);
     }
@@ -90,41 +113,37 @@ export default function HistoricoScreen() {
 
       costs.forEach(cost => {
         if (cost.isFixed) {
-          // Project fixed costs into the range
+          // Project fixed costs into the range, but ONLY FUTURE relative to cost creation
           const costOriginalDate = new Date(cost.date + 'T12:00:00');
           const costDay = costOriginalDate.getDate();
 
-          // Iterate through months from start to end
           let iterDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
           while (iterDate <= endDate) {
             const year = iterDate.getFullYear();
             const month = iterDate.getMonth();
 
-            // Construct potential date for this month
-            // Handle edge cases like Feb 30th -> skips or moves to last day? 
-            // Standard approach: check if day exists.
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             let targetDay = costDay;
-            if (targetDay > daysInMonth) targetDay = daysInMonth; // Cap at end of month
+            if (targetDay > daysInMonth) targetDay = daysInMonth;
 
             const projectedDate = new Date(year, month, targetDay);
             const projectedDateStr = projectedDate.toISOString().split('T')[0];
 
-            if (projectedDateStr >= start && projectedDateStr <= end) {
-              // Add projected cost
-              records.push({
-                ...cost,
-                date: projectedDateStr,
-                type: 'cost',
-                originalDate: cost.date // Keep track if needed
-              });
+            // CRITICAL FIX: Ensure projection is NOT before the original start date
+            if (projectedDate >= costOriginalDate) {
+              if (projectedDateStr >= start && projectedDateStr <= end) {
+                records.push({
+                  ...cost,
+                  id: `${cost.id}_${projectedDateStr}`,
+                  date: projectedDateStr,
+                  type: 'cost',
+                  originalDate: cost.date
+                });
+              }
             }
-
-            // Next month
             iterDate = new Date(iterDate.getFullYear(), iterDate.getMonth() + 1, 1);
           }
         } else {
-          // Normal cost, check date range
           if (cost.date >= start && cost.date <= end) {
             records.push({ ...cost, type: 'cost' });
           }
@@ -135,7 +154,7 @@ export default function HistoricoScreen() {
     records.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return records;
-  }, [data, filterPeriod, filterType, selectedAppId, customStartDate, customEndDate]);
+  }, [data, filterPeriod, filterType, selectedAppId, appliedCustomDate, customStartDate, customEndDate]);
 
   const totals = useMemo(() => {
     const totalEarnings = filteredRecords
@@ -172,25 +191,23 @@ export default function HistoricoScreen() {
     const isExpanded = expandedId === item.id;
     const app = isEarning ? data.faturamentoApps.find((app: any) => app.id === item.appId) : null;
 
-    // Calculate extra metrics for Earnings
     let metaStatus = false;
     let avgValuePerKm = 0;
     let fixedCostShare = 0;
     let realProfit = 0;
+    let totalCost = 0;
 
     if (isEarning) {
       const progress = getRecordProgress(item);
       metaStatus = progress.isAchieved;
       avgValuePerKm = item.kmDriven > 0 ? item.grossEarnings / item.kmDriven : 0;
 
-      // Calculate Fixed Cost Share (Proportional to hours worked)
       const monthlyFixedCosts = getTotalMonthlyCosts(item.date + 'T12:00:00');
       const hoursPerMonth = data.workSchedule.summary.hoursPerMonth;
       const costPerHour = hoursPerMonth > 0 ? monthlyFixedCosts / hoursPerMonth : 0;
       fixedCostShare = costPerHour * (item.hoursWorked || 0);
-
-      // Real Profit = Gross - Variable - Fixed Share
       realProfit = item.grossEarnings - (item.totalVariableCosts || 0) - fixedCostShare;
+      totalCost = (item.totalVariableCosts || 0) + fixedCostShare;
     }
 
     return (
@@ -209,33 +226,50 @@ export default function HistoricoScreen() {
           </View>
           <View style={styles.cardDetails}>
             <Text style={styles.cardTitle}>{isEarning ? (app ? app.name : 'Ganho') : item.categoryName}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={styles.cardDate}>{formatDate(item.date)}</Text>
-              {isEarning && item.kmDriven > 0 && (
-                <Text style={styles.cardDate}>•  {item.kmDriven} km</Text>
+
+            <View style={{ gap: 2 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={styles.cardDate}>{formatDate(item.date)}</Text>
+                {isEarning && item.kmDriven > 0 && (
+                  <Text style={styles.cardDate}>• {item.kmDriven} km</Text>
+                )}
+              </View>
+
+              {/* Description for Costs */}
+              {!isEarning && item.description ? (
+                <Text style={[styles.cardDate, { color: '#D1D5DB', fontStyle: 'italic' }]} numberOfLines={1}>
+                  {item.description}
+                </Text>
+              ) : null}
+
+              {/* Earnings Summary Row */}
+              {isEarning && (
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
+                  <Text style={[styles.cardDate, { color: '#9CA3AF' }]}>
+                    Bruto: <Text style={{ color: '#E5E7EB' }}>{formatCurrency(item.grossEarnings)}</Text>
+                  </Text>
+                  <Text style={[styles.cardDate, { color: '#9CA3AF' }]}>
+                    Custo: <Text style={{ color: '#EF4444' }}>{formatCurrency(totalCost)}</Text>
+                  </Text>
+                </View>
               )}
             </View>
 
-            {isEarning && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: metaStatus ? 'rgba(0, 168, 90, 0.1)' : 'rgba(245, 158, 11, 0.1)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' }}>
-                <MaterialIcons
-                  name={metaStatus ? 'check-circle' : 'info'}
-                  size={12}
-                  color={metaStatus ? '#00A85A' : '#F59E0B'}
-                />
-                <Text style={{ fontSize: 10, color: metaStatus ? '#00A85A' : '#F59E0B', marginLeft: 4, fontWeight: '600' }}>
-                  {metaStatus ? 'Meta Atingida' : 'Meta não atingida'}
-                </Text>
+            {isEarning && metaStatus && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                <MaterialIcons name="check-circle" size={12} color="#00A85A" />
+                <Text style={{ fontSize: 10, color: '#00A85A', marginLeft: 4, fontWeight: '600' }}>Meta Atingida</Text>
               </View>
             )}
           </View>
+
           <View style={styles.cardRight}>
             <Text style={[styles.cardAmount, { color: isEarning ? '#00A85A' : '#FF3B30' }]}>
-              {isEarning ? `+ ${formatCurrency(item.netEarnings)}` : `- ${formatCurrency(item.value)}`}
+              {isEarning ? formatCurrency(realProfit) : `- ${formatCurrency(item.value)}`}
             </Text>
             {isEarning && (
               <Text style={{ fontSize: 10, color: '#9CA3AF', textAlign: 'right' }}>
-                Lucro Real: {formatCurrency(realProfit)}
+                Lucro Real
               </Text>
             )}
             <MaterialIcons
@@ -295,6 +329,12 @@ export default function HistoricoScreen() {
                   <Text style={styles.detailLabel}>Fixo:</Text>
                   <Text style={styles.detailValue}>{item.isFixed ? 'Sim' : 'Não'}</Text>
                 </View>
+                {item.categoryName && (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Categoria:</Text>
+                    <Text style={styles.detailValue}>{item.categoryName}</Text>
+                  </View>
+                )}
               </>
             )}
           </View>
@@ -303,10 +343,18 @@ export default function HistoricoScreen() {
     );
   };
 
+  // Modified Filter Button Render to open Modal for Custom
   const renderFilterButton = (period: FilterPeriod, label: string) => (
     <TouchableOpacity
       style={[styles.filterButton, filterPeriod === period && styles.filterButtonActive]}
-      onPress={() => setFilterPeriod(period)}
+      onPress={() => {
+        if (period === 'custom') {
+          setShowCustomFilterModal(true);
+          setFilterPeriod('custom');
+        } else {
+          setFilterPeriod(period);
+        }
+      }}
     >
       <Text style={[styles.filterButtonText, filterPeriod === period && styles.filterButtonTextActive]}>{label}</Text>
     </TouchableOpacity>
@@ -347,70 +395,106 @@ export default function HistoricoScreen() {
         {renderFilterButton('custom', 'Personalizado')}
       </View>
 
-      {/* Inputs de Data Personalizada */}
-      {filterPeriod === 'custom' && (
-        <View style={styles.customDateContainer}>
-          <View style={styles.dateInputGroup}>
-            <Text style={styles.dateLabel}>De:</Text>
-            <TextInput
-              style={styles.dateInput}
-              value={customStartDate}
-              onChangeText={setCustomStartDate}
-              placeholder="DD/MM/AAAA"
-              placeholderTextColor="#6B7280"
-              keyboardType="numeric"
-            />
-          </View>
-          <View style={styles.dateInputGroup}>
-            <Text style={styles.dateLabel}>Até:</Text>
-            <TextInput
-              style={styles.dateInput}
-              value={customEndDate}
-              onChangeText={setCustomEndDate}
-              placeholder="DD/MM/AAAA"
-              placeholderTextColor="#6B7280"
-              keyboardType="numeric"
-            />
-          </View>
-        </View>
-      )}
-
-      {/* Filtros de Tipo (Ganhos/Custos) */}
+      {/* Filtros de Tipo */}
       <View style={styles.typeFiltersContainer}>
         {renderTypeFilterButton('all', 'Todos')}
         {renderTypeFilterButton('earnings', 'Ganhos')}
         {renderTypeFilterButton('costs', 'Custos')}
       </View>
 
-      {/* Filtro de Apps (Horizontal Scroll) */}
-      <View style={styles.appFilterContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appFilterContent}>
-          <TouchableOpacity
-            style={[styles.appChip, !selectedAppId && styles.appChipActive]}
-            onPress={() => setSelectedAppId(null)}
-          >
-            <Text style={[styles.appChipText, !selectedAppId && styles.appChipTextActive]}>Todos Apps</Text>
-          </TouchableOpacity>
+      {/* Modal de Filtro Personalizado */}
+      <Modal
+        visible={showCustomFilterModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCustomFilterModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Filtro Personalizado</Text>
+              <TouchableOpacity onPress={() => setShowCustomFilterModal(false)}>
+                <MaterialIcons name="close" size={24} color="#9CA3AF" />
+              </TouchableOpacity>
+            </View>
 
-          {data.faturamentoApps.map(app => (
-            <TouchableOpacity
-              key={app.id}
-              style={[
-                styles.appChip,
-                selectedAppId === app.id && { backgroundColor: app.color + '20', borderColor: app.color } // Light background
-              ]}
-              onPress={() => setSelectedAppId(selectedAppId === app.id ? null : app.id)}
-            >
-              <Text style={[
-                styles.appChipText,
-                selectedAppId === app.id && { color: app.color, fontWeight: 'bold' }
-              ]}>
-                {app.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+            <View style={styles.modalBody}>
+              <Text style={styles.sectionLabel}>Período:</Text>
+              <View style={styles.customDateContainer}>
+                <View style={styles.dateInputGroup}>
+                  <Text style={styles.dateLabel}>De:</Text>
+                  <TextInput
+                    style={styles.dateInput}
+                    value={customStartDate}
+                    onChangeText={(t) => setCustomStartDate(formatInputDate(t))}
+                    placeholder="DD/MM/AAAA"
+                    placeholderTextColor="#6B7280"
+                    keyboardType="numeric"
+                    maxLength={10}
+                  />
+                </View>
+                <View style={styles.dateInputGroup}>
+                  <Text style={styles.dateLabel}>Até:</Text>
+                  <TextInput
+                    style={styles.dateInput}
+                    value={customEndDate}
+                    onChangeText={(t) => setCustomEndDate(formatInputDate(t))}
+                    placeholder="DD/MM/AAAA"
+                    placeholderTextColor="#6B7280"
+                    keyboardType="numeric"
+                    maxLength={10}
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.sectionLabel}>Aplicativo:</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.modalAppList}
+              >
+                <TouchableOpacity
+                  style={[styles.appChip, !selectedAppId && styles.appChipActive]}
+                  onPress={() => setSelectedAppId(null)}
+                >
+                  <Text style={[styles.appChipText, !selectedAppId && styles.appChipTextActive]}>Todos</Text>
+                </TouchableOpacity>
+
+                {data.faturamentoApps.map(app => (
+                  <TouchableOpacity
+                    key={app.id}
+                    style={[
+                      styles.appChip,
+                      selectedAppId === app.id && { backgroundColor: app.color + '20', borderColor: app.color }
+                    ]}
+                    onPress={() => setSelectedAppId(selectedAppId === app.id ? null : app.id)}
+                  >
+                    <Text style={[
+                      styles.appChipText,
+                      selectedAppId === app.id && { color: app.color, fontWeight: 'bold' }
+                    ]}>
+                      {app.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <TouchableOpacity
+                style={styles.modalApplyButton}
+                onPress={() => {
+                  handleApplyCustomFilter();
+                  // Close only if valid? HandleApply checks validity.
+                  if (customStartDate.length === 10 && customEndDate.length === 10) {
+                    setShowCustomFilterModal(false);
+                  }
+                }}
+              >
+                <Text style={styles.modalApplyButtonText}>Aplicar Filtro</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Lista */}
       {filteredRecords.length === 0 ? (
@@ -436,6 +520,49 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#111827',
+  },
+  // ... existing styles ...
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20
+  },
+  modalContent: {
+    backgroundColor: '#1F2937',
+    borderRadius: 12,
+    padding: 20,
+    maxHeight: '80%'
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'white'
+  },
+  modalBody: {
+    gap: 16
+  },
+  modalAppList: {
+    gap: 8,
+    paddingBottom: 8
+  },
+  modalApplyButton: {
+    backgroundColor: '#00A85A',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8
+  },
+  modalApplyButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16
   },
   summaryCard: {
     backgroundColor: '#1F2937',
@@ -496,30 +623,69 @@ const styles = StyleSheet.create({
   filterButtonTextActive: {
     color: '#FFFFFF',
   },
-  customDateContainer: {
-    flexDirection: 'row',
-    gap: 12,
+  customFilterWrapper: {
     marginHorizontal: 16,
     marginBottom: 12,
+    backgroundColor: '#1F2937',
+    borderRadius: 12,
+    padding: 12,
+  },
+  customDateContainer: {
+    flexDirection: 'row',
+    gap: 12, // Increased gap for modal
+    marginBottom: 0,
   },
   dateInputGroup: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1F2937',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
+    gap: 4,
   },
   dateLabel: {
     color: '#9CA3AF',
-    fontSize: 14,
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
+    marginLeft: 4,
   },
   dateInput: {
-    flex: 1,
+    backgroundColor: '#374151',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     color: '#FFFFFF',
     fontSize: 14,
+    borderWidth: 1,
+    borderColor: '#4B5563',
+  },
+  applyFilterButton: {
+    backgroundColor: '#374151',
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  applyFilterButtonActive: {
+    backgroundColor: '#00A85A',
+  },
+  applyFilterText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  clearFilterButton: {
+    backgroundColor: '#374151',
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionLabel: {
+    color: '#9CA3AF',
+    fontSize: 14, // Slightly larger for modal
+    fontWeight: '600',
+    marginBottom: 8,
+    marginLeft: 4,
   },
   typeFiltersContainer: {
     flexDirection: 'row',
@@ -556,7 +722,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#374151',
-    backgroundColor: '#1F2937',
+    backgroundColor: '#1F2937', // Or lighter in modal?
   },
   appChipActive: {
     backgroundColor: '#374151',

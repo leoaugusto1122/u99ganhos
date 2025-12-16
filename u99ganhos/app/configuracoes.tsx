@@ -16,7 +16,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useFinance } from '@/hooks/useFinance';
 import CategoryModal from '@/components/CategoryModal';
 
-type TabType = 'categoria' | 'horario' | 'apps' | 'custos';
+type TabType = 'categoria' | 'horario' | 'apps' | 'custos' | 'permissoes';
 
 const CATEGORY_TYPES = [
   { key: 'fixed', label: 'Custos Fixos', color: '#FF3B30' },
@@ -64,8 +64,15 @@ export default function ConfiguracoesScreen() {
     deleteFaturamentoApp,
     toggleAppStatus,
     deleteCost,
-    getTotalMonthlyCosts
+    getTotalMonthlyCosts,
+    permissions,
+    requestPermissions,
+    checkPermissions
   } = useFinance();
+
+  React.useEffect(() => {
+    checkPermissions();
+  }, []);
 
   const showAlert = (title: string, message: string, onConfirm?: () => void) => {
     if (Platform.OS === 'web') {
@@ -82,13 +89,13 @@ export default function ConfiguracoesScreen() {
 
   const handleSaveCategory = (name: string, type: any): boolean => {
     if (editingCategory) {
-      const success = updateCategory(editingCategory.id, name, type);
+      const success = updateCategory(editingCategory.id, name);
       if (success) {
         setEditingCategory(null);
       }
       return success;
     } else {
-      return addCategory(name, type);
+      return addCategory(name);
     }
   };
 
@@ -155,6 +162,7 @@ export default function ConfiguracoesScreen() {
       case 'apps': return 'Apps de Faturamento';
       case 'horario': return 'Horário de Trabalho';
       case 'custos': return 'Custos Mensais';
+      case 'permissoes': return 'Permissões do Sistema';
       default: return 'Configurações';
     }
   };
@@ -290,7 +298,7 @@ export default function ConfiguracoesScreen() {
     switch (activeTab) {
       case 'categoria':
         return (
-          <View style={styles.tabContent}>
+          <View style={[styles.tabContent, { flex: 1 }]}>
             <TouchableOpacity
               style={styles.addButton}
               onPress={() => {
@@ -323,7 +331,7 @@ export default function ConfiguracoesScreen() {
 
       case 'apps':
         return (
-          <View style={styles.tabContent}>
+          <View style={[styles.tabContent, { flex: 1 }]}>
             <TouchableOpacity
               style={styles.addButton}
               onPress={() => {
@@ -349,7 +357,7 @@ export default function ConfiguracoesScreen() {
 
       case 'horario':
         return (
-          <View style={styles.tabContent}>
+          <ScrollView style={styles.tabContent} contentContainerStyle={{ paddingBottom: 32 }} showsVerticalScrollIndicator={false}>
             <Text style={styles.sectionTitle}>Horário de trabalho</Text>
             <Text style={styles.sectionSubtitle}>Selecione seus dias de trabalho</Text>
 
@@ -386,7 +394,7 @@ export default function ConfiguracoesScreen() {
                 </View>
               </View>
             )}
-          </View>
+          </ScrollView>
         );
 
       case 'custos':
@@ -416,7 +424,7 @@ export default function ConfiguracoesScreen() {
         };
 
         return (
-          <View style={styles.tabContent}>
+          <View style={[styles.tabContent, { flex: 1 }]}>
             {/* Month Selector */}
             <View style={styles.monthSelector}>
               <TouchableOpacity onPress={() => navigateMonth('prev')} style={styles.monthButton}>
@@ -456,6 +464,94 @@ export default function ConfiguracoesScreen() {
           </View>
         );
 
+      case 'permissoes':
+        return (
+          <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+            <Text style={styles.sectionTitle}>Permissões & Acesso</Text>
+            <Text style={styles.sectionSubtitle}>
+              Gerencie as permissões necessárias para o funcionamento correto do app.
+            </Text>
+
+            {/* Localização */}
+            <View style={styles.permissionItem}>
+              <View style={styles.permissionInfo}>
+                <View style={styles.permissionHeader}>
+                  <MaterialIcons name="gps-fixed" size={24} color="#FFFFFF" />
+                  <Text style={styles.permissionTitle}>Localização (GPS)</Text>
+                </View>
+                <Text style={styles.permissionDesc}>
+                  Necessário para rastrear seus percursos e calcular quilometragem.
+                </Text>
+              </View>
+              <View style={styles.permissionAction}>
+                <Text style={[
+                  styles.permissionStatus,
+                  { color: permissions.location ? '#00A85A' : '#FF3B30' }
+                ]}>
+                  {permissions.location ? 'Ativo' : 'Inativo'}
+                </Text>
+                {!permissions.location && (
+                  <TouchableOpacity
+                    style={styles.permissionButton}
+                    onPress={() => requestPermissions('location')}
+                  >
+                    <Text style={styles.permissionButtonText}>Ativar</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Armazenamento / Backup */}
+            <View style={styles.permissionItem}>
+              <View style={styles.permissionInfo}>
+                <View style={styles.permissionHeader}>
+                  <MaterialIcons name="folder" size={24} color="#FFFFFF" />
+                  <Text style={styles.permissionTitle}>Pasta de Backup</Text>
+                </View>
+                <Text style={styles.permissionDesc}>
+                  Selecione uma pasta para salvar seus backups automaticamente (Somente Android).
+                </Text>
+              </View>
+              <View style={styles.permissionAction}>
+                <Text style={[
+                  styles.permissionStatus,
+                  { color: permissions.storage ? '#00A85A' : '#F59E0B' }
+                ]}>
+                  {permissions.storage ? 'Configurado' : 'Pendente'}
+                </Text>
+                <TouchableOpacity
+                  style={styles.permissionButton}
+                  onPress={() => requestPermissions('storage')}
+                >
+                  <Text style={styles.permissionButtonText}>Configurar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Notificações */}
+            <View style={styles.permissionItem}>
+              <View style={styles.permissionInfo}>
+                <View style={styles.permissionHeader}>
+                  <MaterialIcons name="notifications" size={24} color="#FFFFFF" />
+                  <Text style={styles.permissionTitle}>Notificações</Text>
+                </View>
+                <Text style={styles.permissionDesc}>
+                  Receba alertas de manutenções e lembretes diários.
+                </Text>
+              </View>
+              <View style={styles.permissionAction}>
+                <Text style={[
+                  styles.permissionStatus,
+                  { color: permissions.notifications ? '#00A85A' : '#FF3B30' }
+                ]}>
+                  {permissions.notifications ? 'Ativo' : 'Desativado (Expo Go)'}
+                </Text>
+                {/* Button hidden as it is disabled in code */}
+              </View>
+            </View>
+          </ScrollView>
+        );
+
       default:
         return null;
     }
@@ -465,9 +561,11 @@ export default function ConfiguracoesScreen() {
     <View style={styles.container}>
       <Stack.Screen options={{ title: getTitle() }} />
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+
+
+      <View style={styles.content}>
         {renderTabContent()}
-      </ScrollView>
+      </View>
 
       <CategoryModal
         visible={categoryModalVisible}
@@ -917,6 +1015,57 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
   },
+
+  // Permission Styles
+  permissionItem: {
+    backgroundColor: '#1F2937',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  permissionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  permissionInfo: {
+    marginBottom: 12,
+  },
+  permissionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  permissionDesc: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    lineHeight: 20,
+  },
+  permissionAction: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#374151',
+    paddingTop: 12,
+  },
+  permissionStatus: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  permissionButton: {
+    backgroundColor: '#374151',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  permissionButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+
   monthSelector: {
     flexDirection: 'row',
     alignItems: 'center',

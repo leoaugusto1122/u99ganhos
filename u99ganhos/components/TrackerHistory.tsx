@@ -109,7 +109,7 @@ export default function TrackerHistory() {
                 </TouchableOpacity>
             </View>
 
-            {/* Summary Stats */}
+            {/* Summary Stats - Removed for minimalist view on Home Screen
             <View style={styles.statsRow}>
                 <View style={styles.statCard}>
                     <Text style={styles.statLabel}>Hoje</Text>
@@ -120,6 +120,7 @@ export default function TrackerHistory() {
                     <Text style={styles.statValue}>{weekKm.toFixed(1)} km</Text>
                 </View>
             </View>
+            */}
 
             {/* Recent Sessions */}
             <FlatList
