@@ -12,7 +12,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { MaterialIcons, FontAwesome5, Ionicons } from '@expo/vector-icons';
-import { Category, Vehicle, CostType } from '@/services/types';
+import { Category, Vehicle, CostType, Cost } from '@/services/types';
 
 interface CostModalProps {
   visible: boolean;
@@ -28,19 +28,22 @@ interface CostModalProps {
       installments?: number;
       intervalKm?: number;
       intervalDays?: number;
-    }
+    },
+    liters?: number
   ) => void;
   categories: Category[];
   vehicles: Vehicle[];
+  initialData?: Cost;
 }
 
-export default function CostModal({ visible, onClose, onSave, categories, vehicles }: CostModalProps) {
+export default function CostModal({ visible, onClose, onSave, categories, vehicles, initialData }: CostModalProps) {
   const router = useRouter();
 
   // Basic Form
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | undefined>(undefined);
   const [value, setValue] = useState('');
+  const [liters, setLiters] = useState('');
   const [description, setDescription] = useState('');
   const [dateStr, setDateStr] = useState('');
 
@@ -54,13 +57,38 @@ export default function CostModal({ visible, onClose, onSave, categories, vehicl
 
   useEffect(() => {
     if (visible) {
-      setDateStr(new Date().toLocaleDateString('pt-BR'));
-      // Pre-select active vehicle if only one exists?
-      if (vehicles.length === 1 && vehicles[0].active) {
-        setSelectedVehicleId(vehicles[0].id);
+      if (initialData) {
+        setSelectedCategoryId(initialData.categoryId);
+        setSelectedVehicleId(initialData.vehicleId);
+        setValue(initialData.value.toFixed(2).replace('.', ','));
+        setDescription(initialData.description || '');
+        if (initialData.liters) setLiters(initialData.liters.toString());
+
+        // Format YYYY-MM-DD to DD/MM/YYYY
+        if (initialData.date) {
+          const [y, m, d] = initialData.date.split('-');
+          setDateStr(`${d}/${m}/${y}`);
+        } else {
+          setDateStr(new Date().toLocaleDateString('pt-BR'));
+        }
+
+        setCostType('unique'); // Default to unique when editing history
+      } else {
+        // Reset defaults
+        setDateStr(new Date().toLocaleDateString('pt-BR'));
+        if (vehicles.length === 1 && vehicles[0].active) {
+          setSelectedVehicleId(vehicles[0].id);
+        } else {
+          setSelectedVehicleId(undefined);
+        }
+        setSelectedCategoryId('');
+        setValue('');
+        setLiters('');
+        setDescription('');
+        setCostType('unique');
       }
     }
-  }, [visible, vehicles]);
+  }, [visible, vehicles, initialData]);
 
   const [alertConfig, setAlertConfig] = useState<{
     visible: boolean;
@@ -110,7 +138,12 @@ export default function CostModal({ visible, onClose, onSave, categories, vehicl
       return;
     }
 
-    const [day, month, year] = dateStr.split('/');
+    const parts = dateStr.split('/');
+    if (parts.length !== 3) {
+      showAlert('Erro', 'Data inválida. Use o formato DD/MM/AAAA');
+      return;
+    }
+    const [day, month, year] = parts;
     const formattedDate = `${year}-${month}-${day}`;
 
     if (!day || !month || !year || isNaN(Date.parse(formattedDate))) {
@@ -149,7 +182,8 @@ export default function CostModal({ visible, onClose, onSave, categories, vehicl
       description.trim() || undefined,
       formattedDate,
       costType,
-      configOptions
+      configOptions,
+      liters ? parseFloat(liters) : undefined
     );
 
     handleClose();
@@ -158,6 +192,7 @@ export default function CostModal({ visible, onClose, onSave, categories, vehicl
   const handleClose = () => {
     setSelectedCategoryId('');
     setValue('');
+    setLiters('');
     setDescription('');
     setSelectedVehicleId(undefined);
     setCostType('unique');
@@ -183,7 +218,7 @@ export default function CostModal({ visible, onClose, onSave, categories, vehicl
         <View style={styles.overlay}>
           <View style={styles.modal}>
             <View style={styles.header}>
-              <Text style={styles.title}>Novo Custo</Text>
+              <Text style={styles.title}>{initialData ? 'Editar Custo' : 'Novo Custo'}</Text>
               <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
                 <MaterialIcons name="close" size={24} color="#9CA3AF" />
               </TouchableOpacity>
@@ -294,6 +329,10 @@ export default function CostModal({ visible, onClose, onSave, categories, vehicl
                 <View style={{ flex: 1, marginLeft: 8 }}>
                   <Text style={styles.subLabel}>Valor (R$)</Text>
                   <TextInput style={styles.input} value={value} onChangeText={handleValueChange} placeholder="0,00" keyboardType="numeric" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={styles.subLabel}>Litros (Opc)</Text>
+                  <TextInput style={styles.input} value={liters} onChangeText={setLiters} placeholder="0" keyboardType="numeric" />
                 </View>
               </View>
 

@@ -72,8 +72,10 @@ interface FinanceContextType {
       installments?: number;
       intervalKm?: number;
       intervalDays?: number;
-    }
+    },
+    liters?: number
   ) => void;
+  updateCost: (id: string, updates: Partial<Cost>) => void;
   deleteCost: (id: string) => void;
 
   // Queries
@@ -981,7 +983,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       installments?: number;
       intervalKm?: number;
       intervalDays?: number;
-    }
+    },
+    liters?: number
   ) => {
     const category = data.categories.find(cat => cat.id === categoryId);
     if (!category) return;
@@ -995,6 +998,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       categoryName: category.name,
       vehicleId: configOptions?.vehicleId,
       value,
+      liters,
       description,
       date,
       typeSnapshot: type,
@@ -1087,6 +1091,59 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       console.error("Failed to add cost", e);
       Alert.alert("Erro", "Falha ao salvar custo. Verifique os dados.");
     }
+
+    // Auto-Calculate Avg KM/L if liters provided and vehicle attached
+    if (liters && liters > 0 && configOptions?.vehicleId) {
+      recalculateAvgKmPerLiter(configOptions.vehicleId);
+    }
+  };
+
+  const recalculateAvgKmPerLiter = (vehicleId: string) => {
+    // Simple algorithm: Total KM / Total Liters (Lifetime)
+    // Or Interval: (CurrentKM - FirstFuelKM) / TotalLiters?
+    // Let's use: (CurrentKM) / TotalLiters (if we assume vehicle started at 0 in app? No, vehicle has initial KM).
+    // Better: We need delta.
+    // Allow the user to manually set it, or calculate from Costs.
+    // If we sum all liters from costs for this vehicle.
+    // And we take (CurrentKM - StartKM). Note: StartKM isn't explicitly stored, but we have `createdAt` or we can assume `currentKm` when first cost was added?
+    // Simplest approach requested: "Automatic".
+    // I will try: `vehicle.currentKm` / `sum(liters)`. 
+    // Wait, if I bought the car at 50,000km, and I put 10 liters, average cannot be 5000 km/l.
+    // I need `initialKm`. I don't see `initialKm` in Vehicle interface. I see `currentKm`.
+    // I will assume the first recorded cost or maintenance or just "all driven km in app".
+    // We track `kmDriven` in Earnings.
+    // Total KMs Driven in App = Sum(earnings.kmDriven) + Sum(tracker sessions not linked?).
+    // Total Liters = Sum(costs.liters).
+    // Avg = Total KMs Driven / Total Liters.
+
+    const vehicle = data.vehicles.find(v => v.id === vehicleId);
+    if (!vehicle) return;
+
+    // Calculate total Liters
+    const vehicleCosts = data.costs.filter(c => c.vehicleId === vehicleId && c.liters && c.liters > 0);
+    const totalLiters = vehicleCosts.reduce((sum, c) => sum + (c.liters || 0), 0);
+
+    if (totalLiters === 0) return;
+
+    // Calculate total KM driven (Recorded in Earnings + Tracker)
+    // Actually, `vehicle.currentKm` is the absolute odometer. 
+    // We need the KM driven *while using the app* or *since start of fuel records*.
+    // Let's use `earningsRecords` for that vehicle to sum `kmDriven`.
+    const vehicleEarnings = data.earningsRecords.filter(e => e.vehicleId === vehicleId);
+    const totalKmDriven = vehicleEarnings.reduce((sum, e) => sum + (e.kmDriven || 0), 0);
+
+    // Also include Tracker Sessions that are NOT linked to earnings (if any? usually they are linked or manual).
+    // Let's stick to totalKmDriven from Earnings + manual KM updates?
+    // Manual KM updates don't record "delta".
+    // 
+    // Alternative: Just use the `avgKmPerLiter` field as a rolling average? 
+    // NewAvg = ((OldAvg * OldLiters) + (DrivenSinceLastFuel)) / (OldLiters + NewLiters)? No.
+    // 
+    // Let's use the Sum(Earnings KM) / Sum(Liters). This represents efficiency *during work*.
+    if (totalKmDriven > 0) {
+      const newAvg = totalKmDriven / totalLiters;
+      updateVehicle(vehicleId, { avgKmPerLiter: parseFloat(newAvg.toFixed(2)) });
+    }
   };
 
   const deleteCost = (id: string) => {
@@ -1098,6 +1155,18 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       }));
     } catch (e) {
       console.error("Failed to delete cost", e);
+    }
+  };
+
+  const updateCost = (id: string, updates: Partial<Cost>) => {
+    try {
+      databaseService.updateCost(id, updates);
+      setData(prev => ({
+        ...prev,
+        costs: prev.costs.map(c => c.id === id ? { ...c, ...updates } : c)
+      }));
+    } catch (e) {
+      console.error("Failed to update cost", e);
     }
   };
 
@@ -1421,6 +1490,10 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       // Or better: `databaseService.updateEarningsRecord` IS CALLED assuming I'll implement it.
 
       const updates = { ...record, appName: app?.name, totalVariableCosts, netEarnings };
+
+      // Implemented Update logic in Database Service?
+      // Step 113 View showed updateEarningsRecord uses `runSync` with dynamic fields.
+      // So it IS implemented safely.
       databaseService.updateEarningsRecord(id, updates);
 
       setData(prev => ({ ...prev, earningsRecords: prev.earningsRecords.map(existing => existing.id === id ? { ...existing, ...updates, appName: app?.name || existing.appName } : existing) }));
@@ -1671,20 +1744,21 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const resetApp = async () => {
     try {
       databaseService.clearAllData();
-      // Reset State to defaults
-      setData({
-        categories: [],
-        costs: [],
-        costConfigs: [],
-        vehicles: [],
-        maintenances: [],
-        kmTrackerSessions: [],
-        activeSession: undefined,
-        faturamentoApps: defaultFaturamentoApps,
-        workSchedule: initialWorkSchedule,
-        earningsRecords: [],
-        profitSettings: initialProfitSettings
-      });
+
+      // Re-seed defaults
+      databaseService.initDatabase(); // Ensures tables exist (redundant but safe)
+      // We need to re-insert default apps and categories since clearAllData wipes them
+      // Load them into DB
+      defaultCategories.forEach(c => databaseService.addCategory(c));
+      const apps = databaseService.getSetting<FaturamentoApp[]>('faturamentoApps', defaultFaturamentoApps);
+      if (apps.length === 0) { // If clearAllData wiped settings, this returns default. save it.
+        databaseService.saveSetting('faturamentoApps', defaultFaturamentoApps);
+      }
+
+      // Reset State to defaults (reloading from DB or hardcoded)
+      // Better to hardcode for immediate feedback, but ensuring DB is in sync
+      loadData(); // This is cleaner, it re-fetches everything including the newly seeded defaults
+
       return true;
     } catch (e) {
       console.error("Failed to reset app", e);
@@ -1811,6 +1885,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       deleteTrackerSession,
       updateTrackerSession,
       addCost,
+      updateCost,
       deleteCost,
       getTotalMonthlyCosts,
       addFaturamentoApp,

@@ -60,6 +60,7 @@ export interface Cost {
   vehicleId?: string;
 
   value: number;
+  liters?: number;
   description?: string;
   date: string; // YYYY-MM-DD
 
@@ -180,6 +181,7 @@ export interface VariableCost {
   id: string;
   type: 'gasolina' | 'pedagio' | 'alimentacao' | 'manutencao' | 'outros';
   value: number;
+  liters?: number;
   description?: string;
 }
 

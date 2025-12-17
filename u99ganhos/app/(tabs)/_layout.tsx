@@ -75,9 +75,10 @@ export default function TabLayout() {
       installments?: number;
       intervalKm?: number;
       intervalDays?: number;
-    }
+    },
+    liters?: number
   ) => {
-    addCost(categoryId, value, description, date, type, configOptions);
+    addCost(categoryId, value, description, date, type, configOptions, liters);
   };
 
   return (

@@ -387,14 +387,15 @@ export default function VeiculosScreen() {
                                     />
                                 </View>
                                 <View style={styles.halfInput}>
-                                    <Text style={styles.inputLabel}>Placa *</Text>
+                                    <Text style={styles.inputLabel}>Placa (Mercosul) *</Text>
                                     <TextInput
                                         style={styles.input}
                                         value={plate}
-                                        onChangeText={(text) => setPlate(text.toUpperCase())}
-                                        placeholder="ABC1234"
+                                        onChangeText={(text) => setPlate(text.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                                        placeholder="ABC1D23"
                                         placeholderTextColor="#9CA3AF"
                                         maxLength={7}
+                                        autoCapitalize="characters"
                                     />
                                 </View>
                             </View>

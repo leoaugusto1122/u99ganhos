@@ -57,11 +57,21 @@ export default function FloatingActionButton({ onPressGanhos, onPressDespesas }:
     opacity: animation,
   });
 
+  const handlePressGanhos = () => {
+    toggleMenu();
+    onPressGanhos();
+  };
+
+  const handlePressDespesas = () => {
+    toggleMenu();
+    onPressDespesas();
+  };
+
   return (
     <View style={styles.container}>
       {/* Custo Mensal - Left */}
       <Animated.View style={[styles.subButton, getSubButtonStyle('left')]}>
-        <TouchableOpacity onPress={onPressDespesas} style={styles.subButtonTouchable}>
+        <TouchableOpacity onPress={handlePressDespesas} style={styles.subButtonTouchable}>
           <Text style={styles.subButtonText}>Custo</Text>
           <MaterialIcons name="arrow-downward" size={24} color="#FFFFFF" />
         </TouchableOpacity>
@@ -69,7 +79,7 @@ export default function FloatingActionButton({ onPressGanhos, onPressDespesas }:
 
       {/* Ganho - Right */}
       <Animated.View style={[styles.subButton, getSubButtonStyle('right')]}>
-        <TouchableOpacity onPress={onPressGanhos} style={styles.subButtonTouchable}>
+        <TouchableOpacity onPress={handlePressGanhos} style={styles.subButtonTouchable}>
           <MaterialIcons name="arrow-upward" size={24} color="#FFFFFF" />
           <Text style={[styles.subButtonText, { marginLeft: 8, marginRight: 0 }]}>Ganho</Text>
         </TouchableOpacity>
@@ -115,6 +125,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 20,
+    // Green Shadow
+    shadowColor: '#00A85A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 168, 90, 0.3)'
   },
   subButtonText: {
     color: '#FFFFFF',

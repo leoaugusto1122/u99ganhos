@@ -178,6 +178,9 @@ export const databaseService = {
         workDays TEXT, -- JSON
         summary TEXT -- JSON
       );
+      
+      -- Migration for existing tables
+      try { db.execSync('ALTER TABLE costs ADD COLUMN liters REAL;'); } catch (e) {} -- Ignore if exists
     `);
         console.log('Database initialized successfully');
     },
@@ -470,11 +473,11 @@ export const databaseService = {
     addCost: (cost: Cost) => {
         db.runSync(
             `INSERT INTO costs (
-                id, categoryId, vehicleId, configId, value, description, date, typeSnapshot, isFixed, createdAt
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                id, categoryId, vehicleId, configId, value, liters, description, date, typeSnapshot, isFixed, createdAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 cost.id, cost.categoryId, cost.vehicleId || null, cost.configId || null,
-                cost.value, cost.description || null, cost.date, cost.typeSnapshot,
+                cost.value, cost.liters || null, cost.description || null, cost.date, cost.typeSnapshot,
                 cost.isFixed ? 1 : 0, typeof cost.createdAt === 'string' ? cost.createdAt : cost.createdAt.toISOString()
             ]
         );
@@ -482,6 +485,26 @@ export const databaseService = {
 
     deleteCost: (id: string) => {
         db.runSync('DELETE FROM costs WHERE id = ?', [id]);
+    },
+
+    updateCost: (id: string, updates: Partial<Cost>) => {
+        const fields = Object.keys(updates)
+            .filter(k => k !== 'id')
+            .map(k => `${k} = ?`)
+            .join(', ');
+
+        if (!fields) return;
+
+        const values = Object.keys(updates)
+            .filter(k => k !== 'id')
+            .map(k => {
+                const val = (updates as any)[k];
+                if (typeof val === 'boolean') return val ? 1 : 0;
+                if (val instanceof Date) return val.toISOString();
+                return val;
+            });
+
+        db.runSync(`UPDATE costs SET ${fields} WHERE id = ?`, [...values, id]);
     },
 
     addCostConfig: (config: CostConfig) => {

@@ -89,6 +89,19 @@ export default function ManutencaoVeiculoScreen() {
         setEditingMaintenance(null);
     };
 
+    const formatDateInput = (text: string) => {
+        const cleaned = text.replace(/[^0-9]/g, '');
+        if (cleaned.length <= 2) return cleaned;
+        if (cleaned.length <= 4) return `${cleaned.slice(0, 2)}/${cleaned.slice(2)}`;
+        return `${cleaned.slice(0, 2)}/${cleaned.slice(2, 4)}/${cleaned.slice(4, 8)}`;
+    };
+
+    const convertDateToISO = (dateStr: string) => {
+        if (!dateStr || dateStr.length !== 10) return undefined;
+        const [day, month, year] = dateStr.split('/');
+        return `${year}-${month}-${day}`;
+    };
+
     const handleOpenModal = (maintenance?: Maintenance) => {
         if (maintenance) {
             setEditingMaintenance(maintenance);
@@ -98,7 +111,15 @@ export default function ManutencaoVeiculoScreen() {
             setIntervalKm(maintenance.intervalKm?.toString() || '');
             setIntervalDays(maintenance.intervalDays?.toString() || '');
             setLastKm(maintenance.lastKm?.toString() || '');
-            setLastDate(maintenance.lastDate || '');
+
+            // Format YYYY-MM-DD to DD/MM/YYYY
+            let formattedDate = '';
+            if (maintenance.lastDate) {
+                const [y, m, d] = maintenance.lastDate.split('-');
+                formattedDate = `${d}/${m}/${y}`;
+            }
+            setLastDate(formattedDate);
+
             setEstimatedCost(maintenance.estimatedCost?.toString() || '');
         } else {
             resetForm();
@@ -125,7 +146,7 @@ export default function ManutencaoVeiculoScreen() {
             intervalKm: intervalKm ? parseInt(intervalKm) : undefined,
             intervalDays: intervalDays ? parseInt(intervalDays) : undefined,
             lastKm: lastKm ? parseInt(lastKm) : undefined,
-            lastDate: lastDate || undefined,
+            lastDate: convertDateToISO(lastDate),
             estimatedCost: estimatedCost ? parseFloat(estimatedCost) : undefined,
             active: true,
         };
@@ -452,9 +473,11 @@ export default function ManutencaoVeiculoScreen() {
                                     <TextInput
                                         style={styles.input}
                                         value={lastDate}
-                                        onChangeText={setLastDate}
-                                        placeholder="AAAA-MM-DD"
+                                        onChangeText={(text) => setLastDate(formatDateInput(text))}
+                                        placeholder="DD/MM/AAAA"
                                         placeholderTextColor="#9CA3AF"
+                                        keyboardType="numeric"
+                                        maxLength={10}
                                     />
                                 </View>
                             </View>

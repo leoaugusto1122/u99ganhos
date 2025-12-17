@@ -15,7 +15,9 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFinance } from '@/hooks/useFinance';
-import { EarningsRecord, Cost } from '@/services/types';
+import { EarningsRecord, Cost, CostType } from '@/services/types';
+import EarningsModal from '@/components/EarningsModal';
+import CostModal from '@/components/CostModal';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -38,7 +40,87 @@ export default function HistoricoScreen() {
   // Expanded Card State
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const { data, getRecordProgress, getTotalMonthlyCosts } = useFinance();
+  // Edit State
+  const [editingEarnings, setEditingEarnings] = useState<EarningsRecord | null>(null);
+  const [editingCost, setEditingCost] = useState<Cost | null>(null);
+  const [showEarningsModal, setShowEarningsModal] = useState(false);
+  const [showCostModal, setShowCostModal] = useState(false);
+
+  const {
+    data,
+    getRecordProgress,
+    getTotalMonthlyCosts,
+    deleteEarningsRecord,
+    updateEarningsRecord,
+    deleteCost,
+    updateCost
+  } = useFinance();
+
+  const handleDelete = (item: any) => {
+    const isEarning = item.type === 'earning';
+    Alert.alert(
+      'Confirmar Exclusão',
+      `Deseja realmente excluir este ${isEarning ? 'ganho' : 'custo'}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: () => {
+            if (isEarning) {
+              deleteEarningsRecord(item.id);
+            } else {
+              deleteCost(item.id);
+            }
+            setExpandedId(null);
+          }
+        }
+      ]
+    );
+  };
+
+  const handleEdit = (item: any) => {
+    if (item.type === 'earning') {
+      setEditingEarnings(item as EarningsRecord);
+      setShowEarningsModal(true);
+    } else {
+      setEditingCost(item as Cost);
+      setShowCostModal(true);
+    }
+    setExpandedId(null); // Close card
+  };
+
+  const handleSaveEditedEarnings = (updatedRecord: any) => {
+    if (!editingEarnings) return;
+    updateEarningsRecord(editingEarnings.id, updatedRecord);
+    setShowEarningsModal(false);
+    setEditingEarnings(null);
+  };
+
+  const handleSaveEditedCost = (
+    categoryId: string,
+    value: number,
+    description: string | undefined,
+    date: string,
+    type: CostType,
+    configOptions?: { vehicleId?: string },
+    liters?: number
+  ) => {
+    if (!editingCost) return;
+
+    updateCost(editingCost.id, {
+      categoryId,
+      value,
+      description,
+      date,
+      typeSnapshot: type,
+      vehicleId: configOptions?.vehicleId,
+      liters
+    });
+
+    setShowCostModal(false);
+    setEditingCost(null);
+  };
 
   const handleApplyCustomFilter = () => {
     if (customStartDate.length === 10 && customEndDate.length === 10) {
@@ -337,6 +419,24 @@ export default function HistoricoScreen() {
                 )}
               </>
             )}
+
+
+            <View style={styles.actionButtonsContainer}>
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => handleEdit(item)}
+              >
+                <MaterialIcons name="edit" size={20} color="#FFFFFF" />
+                <Text style={styles.actionButtonText}>Editar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => handleDelete(item)}
+              >
+                <MaterialIcons name="delete" size={20} color="#EF4444" />
+                <Text style={[styles.actionButtonText, { color: '#EF4444' }]}>Excluir</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </TouchableOpacity>
@@ -512,6 +612,25 @@ export default function HistoricoScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
+      )}
+
+      {/* Edit Modals */}
+      <EarningsModal
+        visible={showEarningsModal}
+        onClose={() => { setShowEarningsModal(false); setEditingEarnings(null); }}
+        onSave={handleSaveEditedEarnings}
+        initialData={editingEarnings}
+      />
+
+      <CostModal
+        visible={showCostModal}
+        onClose={() => { setShowCostModal(false); setEditingCost(null); }}
+        onSave={handleSaveEditedCost}
+        categories={data.categories}
+        vehicles={data.vehicles}
+        initialData={editingCost || undefined}
+      />
+
     </View>
   );
 }
@@ -797,6 +916,38 @@ const styles = StyleSheet.create({
   detailValue: {
     fontSize: 14,
     color: '#E5E7EB',
+  },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#374151',
+  },
+  editButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#374151',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 6,
+  },
+  deleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 6,
+  },
+  actionButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#FFFFFF',
   },
   emptyState: {
     flex: 1,
