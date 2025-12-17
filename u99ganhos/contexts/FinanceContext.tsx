@@ -229,7 +229,10 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       const earningsRecords = databaseService.getEarningsRecords();
       const kmTrackerSessions = databaseService.getKMSessions();
 
-      const workSchedule = databaseService.getWorkSchedule() || initialWorkSchedule;
+      let workSchedule = databaseService.getWorkSchedule();
+      if (!workSchedule || !workSchedule.workDays || workSchedule.workDays.length === 0) {
+        workSchedule = initialWorkSchedule;
+      }
       const profitSettings = databaseService.getSetting<ProfitSettings>('profitSettings', initialProfitSettings);
       const faturamentoApps = databaseService.getSetting<FaturamentoApp[]>('faturamentoApps', defaultFaturamentoApps);
 
@@ -775,16 +778,64 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         gpsPoints: completedSession.gpsPoints // Ensure latest points
       });
 
-      // If autoSave is true, update vehicle KM 
-      if (autoSave && completedSession.vehicleId && completedSession.totalDistanceKm > 0) {
-        const vehicle = data.vehicles.find(v => v.id === completedSession.vehicleId);
-        if (vehicle) {
-          const newKm = Math.round((vehicle.currentKm + completedSession.totalDistanceKm) * 100) / 100;
-          // Reuse updateVehicleKm to handle DB updates for Vehicle, Costs, Maintenances
-          // But updateVehicleKm expects ID and KM.
-          // We can't call it directly if it's inside the same scope easily unless we use the function reference.
-          // updateVehicleKm IS available in scope.
-          updateVehicleKm(vehicle.id, newKm);
+      // If autoSave is true, update vehicle KM AND Earnings Records
+      if (autoSave && completedSession.totalDistanceKm > 0) {
+
+        // 1. Update Vehicle KM
+        if (completedSession.vehicleId) {
+          const vehicle = data.vehicles.find(v => v.id === completedSession.vehicleId);
+          if (vehicle) {
+            const newKm = Math.round((vehicle.currentKm + completedSession.totalDistanceKm) * 100) / 100;
+            updateVehicleKm(vehicle.id, newKm);
+          }
+        }
+
+        // 2. Update Earnings Record (KM & Hours)
+        try {
+          const endDate = new Date();
+          const year = endDate.getFullYear();
+          const month = String(endDate.getMonth() + 1).padStart(2, '0');
+          const day = String(endDate.getDate()).padStart(2, '0');
+          const sessionDate = `${year}-${month}-${day}`;
+
+          const sessionHours = completedSession.duration / (1000 * 60 * 60);
+
+          // Find existing record for today
+          const existingRecords = data.earningsRecords.filter(r => r.date === sessionDate);
+
+          // Prefer a newly created record or one without KM data, otherwise update the last one
+          let targetRecord = existingRecords.find(r => !r.kmDriven || r.kmDriven === 0);
+          if (!targetRecord && existingRecords.length > 0) {
+            targetRecord = existingRecords[existingRecords.length - 1];
+          }
+
+          if (targetRecord) {
+            const newKm = (targetRecord.kmDriven || 0) + completedSession.totalDistanceKm;
+            const newHours = (targetRecord.hoursWorked || 0) + sessionHours;
+
+            // Extract fields to satisfy Omit type in updateEarningsRecord
+            const { id, createdAt, totalVariableCosts, netEarnings, ...rest } = targetRecord;
+
+            updateEarningsRecord(id, {
+              ...rest,
+              kmDriven: Number(newKm.toFixed(2)),
+              hoursWorked: Number(newHours.toFixed(2))
+            });
+          } else if (data.faturamentoApps.length > 0) {
+            // Create new generic record if no record exists for today
+            addEarningsRecord({
+              date: sessionDate,
+              appId: data.faturamentoApps[0].id, // Default to first app
+              appName: data.faturamentoApps[0].name,
+              grossEarnings: 0,
+              variableCosts: [],
+              hoursWorked: Number(sessionHours.toFixed(2)),
+              kmDriven: Number(completedSession.totalDistanceKm.toFixed(2)),
+              vehicleId: completedSession.vehicleId
+            });
+          }
+        } catch (err) {
+          console.error("Failed to auto-update earnings from tracker", err);
         }
       }
 
@@ -836,6 +887,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   const addGPSPoint = (point: GPSPoint) => {
     if (!data.activeSession || data.activeSession.status !== 'active') {
+      return;
+    }
+
+    // Filter out low accuracy points (poor signal) to improve distance calculation
+    if (point.accuracy && point.accuracy > 50) {
       return;
     }
 

@@ -221,7 +221,11 @@ export const databaseService = {
         const faturamentoApps: FaturamentoApp[] = []; // Placeholder
 
         const workSchedule = databaseService.getWorkSchedule() || {
-            workDays: [],
+            workDays: ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'].map(day => ({
+                day,
+                enabled: false,
+                hours: 4
+            })),
             summary: { daysPerWeek: 0, hoursPerWeek: 0, daysPerMonth: 0, hoursPerMonth: 0 }
         };
 

@@ -51,9 +51,9 @@ class LocationService {
         try {
             this.watchId = await Location.watchPositionAsync(
                 {
-                    accuracy: Location.Accuracy.Balanced, // Balance between accuracy and battery
-                    distanceInterval: 30, // Update every 30 meters
-                    timeInterval: 10000, // Or every 10 seconds
+                    accuracy: Location.Accuracy.High, // High accuracy for better distance tracking
+                    distanceInterval: 10, // Update every 10 meters
+                    timeInterval: 5000, // Or every 5 seconds
                 },
                 (location) => {
                     callback(location);
