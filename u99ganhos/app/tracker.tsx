@@ -15,14 +15,16 @@ import { MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useFinance } from '@/hooks/useFinance';
 import { locationService } from '@/services/locationService';
 import TrackerStats from '@/components/TrackerStats';
+import EarningsModal from '@/components/EarningsModal';
+import { EarningsRecord } from '@/services/types';
 import * as Location from 'expo-location';
 
 export default function TrackerScreen() {
     const router = useRouter();
     const {
         data,
-        startKMTracking,
-        stopKMTracking,
+        startWorkSession,
+        finishWorkSession,
         pauseKMTracking,
         resumeKMTracking,
         addGPSPoint,
@@ -31,6 +33,7 @@ export default function TrackerScreen() {
         getTrackerSessions,
         deleteTrackerSession,
         updateTrackerSession,
+        addEarningsRecord,
     } = useFinance();
 
     const [hasPermission, setHasPermission] = useState(false);
@@ -38,6 +41,21 @@ export default function TrackerScreen() {
     const [currentDistance, setCurrentDistance] = useState(0);
     const [currentDuration, setCurrentDuration] = useState(0);
     const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+    const [currentSpeed, setCurrentSpeed] = useState(0);
+    const [earningsModalVisible, setEarningsModalVisible] = useState(false);
+
+    // Calculate Earnings for Active Session
+    const sessionEarnings = data.activeSession
+        ? data.earningsRecords.filter(r => r.sessionId === data.activeSession!.id)
+        : [];
+    const totalSessionEarnings = sessionEarnings.reduce((sum, r) => sum + r.grossEarnings, 0);
+
+    const activeVehicle = data.activeSession?.vehicleId
+        ? data.vehicles.find(v => v.id === data.activeSession?.vehicleId)
+        : null;
+
+    // Live Avg Speed (km/h)
+    const liveAvgSpeed = currentDuration > 0 ? (currentDistance / (currentDuration / 3600000)) : 0;
 
     // Check permissions on mount
     useEffect(() => {
@@ -95,6 +113,9 @@ export default function TrackerScreen() {
                 };
                 addGPSPoint(gpsPoint);
                 setGpsAccuracy(location.coords.accuracy || null);
+                // Speed m/s -> km/h
+                const speedKmh = (location.coords.speed || 0) * 3.6;
+                setCurrentSpeed(speedKmh > 0 ? speedKmh : 0);
             },
             (error) => {
                 console.error('GPS tracking error:', error);
@@ -141,7 +162,8 @@ export default function TrackerScreen() {
             setSelectedVehicleId(data.vehicles[0].id);
         }
 
-        const success = startKMTracking(selectedVehicleId);
+        // Use new startWorkSession
+        const success = startWorkSession(selectedVehicleId || data.vehicles[0]?.id);
         if (!success) {
             showAlert('Erro', 'Já existe uma sessão ativa.');
         }
@@ -153,28 +175,30 @@ export default function TrackerScreen() {
         const distance = currentDistance.toFixed(2);
         const duration = formatDuration(currentDuration);
 
-        if (Platform.OS === 'web') {
-            const autoSave = confirm(
-                `Percurso Finalizado\n\nDistância: ${distance} km\nTempo: ${duration}\n\nSalvar automaticamente no veículo?`
-            );
-            stopKMTracking(autoSave);
-        } else {
-            Alert.alert(
-                'Percurso Finalizado',
-                `Distância: ${distance} km\nTempo: ${duration}\n\nSalvar automaticamente no veículo?`,
-                [
-                    {
-                        text: 'Não Salvar',
-                        style: 'cancel',
-                        onPress: () => stopKMTracking(false)
-                    },
-                    {
-                        text: 'Salvar',
-                        onPress: () => stopKMTracking(true)
+        Alert.alert(
+            'Finalizar Sessão',
+            `Deseja finalizar a sessão de trabalho?\n\nDistância: ${distance} km\nTempo: ${duration}`,
+            [
+                {
+                    text: 'Cancelar',
+                    style: 'cancel'
+                },
+                {
+                    text: 'Finalizar',
+                    style: 'destructive',
+                    onPress: () => {
+                        // Use new finishWorkSession
+                        const session = finishWorkSession();
+                        if (session) {
+                            // Navigate to Summary
+                            router.replace({ pathname: '/session/summary', params: { sessionId: session.id } });
+                        } else {
+                            showAlert('Erro', 'Falha ao finalizar sessão.');
+                        }
                     }
-                ]
-            );
-        }
+                }
+            ]
+        );
     };
 
     const formatDuration = (ms: number): string => {
@@ -212,6 +236,7 @@ export default function TrackerScreen() {
 
     const renderSessionItem = ({ item }: { item: any }) => (
         <TouchableOpacity
+            onPress={() => router.push({ pathname: '/session/summary', params: { sessionId: item.id } })}
             onLongPress={() => handleDeleteSession(item)}
             activeOpacity={0.7}
         >
@@ -249,7 +274,7 @@ export default function TrackerScreen() {
             <Stack.Screen
                 options={{
                     headerShown: true,
-                    title: 'Rastreador GPS',
+                    title: 'Sessão de Trabalho',
                     headerStyle: { backgroundColor: '#1F2937' },
                     headerTintColor: '#FFF',
                     headerLeft: () => (
@@ -270,40 +295,112 @@ export default function TrackerScreen() {
                 <View style={styles.trackerCard}>
                     {isTracking || isPaused ? (
                         <>
-                            {/* Active Tracking Display */}
-                            <View style={styles.distanceDisplay}>
-                                <Text style={styles.distanceValue}>{currentDistance.toFixed(2)}</Text>
-                                <Text style={styles.distanceUnit}>km</Text>
-                            </View>
-
-                            <View style={styles.statsRow}>
-                                <View style={styles.statItem}>
-                                    <MaterialIcons name="access-time" size={20} color="#9CA3AF" />
-                                    <Text style={styles.statText}>{formatDuration(currentDuration)}</Text>
+                            {/* Session Header Info - PRD Item 5 */}
+                            <View style={styles.sessionHeaderInfo}>
+                                <View>
+                                    <Text style={styles.headerDateLabel}>{new Date().toLocaleDateString('pt-BR')}</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                        <View style={[styles.statusDot, { backgroundColor: isPaused ? '#F59E0B' : '#10B981' }]} />
+                                        <Text style={styles.headerStatusLabel}>{isPaused ? 'Pausada' : 'Ativa'}</Text>
+                                    </View>
                                 </View>
-                                {gpsAccuracy && (
-                                    <View style={styles.statItem}>
-                                        <MaterialIcons name="gps-fixed" size={20} color={getGPSStatusColor()} />
-                                        <Text style={styles.statText}>±{gpsAccuracy.toFixed(0)}m</Text>
+                                {isPaused && (
+                                    <View style={styles.pausedBadge}>
+                                        <Text style={styles.pausedText}>PAUSADO</Text>
                                     </View>
                                 )}
+                            </View>
+
+                            {/* Main Cards Grid - PRD Item 5 */}
+                            <View style={styles.cardsContainer}>
+
+                                {/* Card 1: Time */}
+                                <View style={styles.infoCard}>
+                                    <View style={styles.cardHeaderRow}>
+                                        <MaterialIcons name="access-time" size={16} color="#9CA3AF" />
+                                        <Text style={styles.cardLabel}>Tempo</Text>
+                                    </View>
+                                    <Text style={styles.cardMainValue}>{formatDuration(currentDuration).substring(0, 5)}</Text>
+                                    <Text style={styles.cardSubValue}>{formatDuration(currentDuration).substring(6)}s</Text>
+                                </View>
+
+                                {/* Card 2: Distance */}
+                                <View style={styles.infoCard}>
+                                    <View style={styles.cardHeaderRow}>
+                                        <MaterialIcons name="place" size={16} color="#9CA3AF" />
+                                        <Text style={styles.cardLabel}>Distância</Text>
+                                    </View>
+                                    <Text style={[styles.cardMainValue, { color: '#00A85A' }]}>{currentDistance.toFixed(1)}</Text>
+                                    <Text style={styles.cardSubValue}>km</Text>
+                                    <View style={styles.gpsIndicator}>
+                                        <MaterialIcons name="gps-fixed" size={12} color={getGPSStatusColor()} />
+                                        <Text style={[styles.gpsText, { color: getGPSStatusColor() }]}>GPS</Text>
+                                    </View>
+                                </View>
+
+                                {/* Card 3: Vehicle */}
+                                <View style={styles.infoCard}>
+                                    <View style={styles.cardHeaderRow}>
+                                        <FontAwesome5 name={activeVehicle?.type === 'moto' ? 'motorcycle' : 'car'} size={14} color="#9CA3AF" />
+                                        <Text style={styles.cardLabel}>Veículo</Text>
+                                    </View>
+                                    <Text style={styles.vehicleName} numberOfLines={1}>{activeVehicle?.model || 'Veículo'}</Text>
+                                    <Text style={styles.vehicleKm}>{(activeVehicle?.currentKm || 0).toLocaleString('pt-BR')} km</Text>
+                                </View>
+
+                                {/* Card 4: Earnings (Full Width) */}
+                                <TouchableOpacity
+                                    style={[styles.infoCard, styles.earningsCard]}
+                                    onPress={() => setEarningsModalVisible(true)}
+                                >
+                                    <View style={styles.cardHeaderRow}>
+                                        <MaterialIcons name="attach-money" size={18} color="#34D399" />
+                                        <Text style={[styles.cardLabel, { color: '#34D399' }]}>Ganhos da Sessão</Text>
+                                    </View>
+                                    <Text style={styles.earningsValue}>
+                                        {totalSessionEarnings.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                    </Text>
+
+                                    {/* Mini List of Apps */}
+                                    <View style={styles.miniAppList}>
+                                        {sessionEarnings.slice(0, 3).map((r, i) => (
+                                            <View key={i} style={styles.miniAppItem}>
+                                                <Text style={styles.miniAppName}>{r.appName}</Text>
+                                                <Text style={styles.miniAppValue}>R$ {r.grossEarnings.toFixed(0)}</Text>
+                                            </View>
+                                        ))}
+                                        {sessionEarnings.length === 0 && (
+                                            <Text style={styles.noEarningsText}>Toque para adicionar</Text>
+                                        )}
+                                    </View>
+
+                                    <View style={styles.addEarningButton}>
+                                        <MaterialIcons name="add-circle" size={24} color="#34D399" />
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* Speed floating or somewhere else? PRD didn't emphasize speed as a main card, but useful. Keeping it subtle. */}
+                            <View style={styles.speedContainer}>
+                                <Text style={styles.speedLabel}>Vel. Atual</Text>
+                                <Text style={styles.speedText}>{currentSpeed.toFixed(0)} km/h</Text>
                             </View>
 
                             {/* Control Buttons */}
                             <View style={styles.controlButtons}>
                                 {isTracking ? (
                                     <TouchableOpacity style={styles.pauseButton} onPress={pauseKMTracking}>
-                                        <MaterialIcons name="pause" size={24} color="#FFF" />
+                                        <MaterialIcons name="pause" size={28} color="#FFF" />
                                         <Text style={styles.buttonText}>Pausar</Text>
                                     </TouchableOpacity>
                                 ) : (
                                     <TouchableOpacity style={styles.resumeButton} onPress={resumeKMTracking}>
-                                        <MaterialIcons name="play-arrow" size={24} color="#FFF" />
+                                        <MaterialIcons name="play-arrow" size={28} color="#FFF" />
                                         <Text style={styles.buttonText}>Continuar</Text>
                                     </TouchableOpacity>
                                 )}
                                 <TouchableOpacity style={styles.stopButton} onPress={handleStopTracking}>
-                                    <MaterialIcons name="stop" size={24} color="#FFF" />
+                                    <MaterialIcons name="stop" size={28} color="#FFF" />
                                     <Text style={styles.buttonText}>Encerrar</Text>
                                 </TouchableOpacity>
                             </View>
@@ -355,6 +452,14 @@ export default function TrackerScreen() {
                                 <MaterialIcons name="play-arrow" size={32} color="#FFF" />
                                 <Text style={styles.startButtonText}>Iniciar Percurso</Text>
                             </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.retroactiveButton}
+                                onPress={() => router.push('/session/retroactive')}
+                            >
+                                <MaterialIcons name="history" size={20} color="#9CA3AF" />
+                                <Text style={styles.retroactiveButtonText}>Lançar Sessão Retroativa</Text>
+                            </TouchableOpacity>
                         </>
                     )}
                 </View>
@@ -379,6 +484,25 @@ export default function TrackerScreen() {
                     )
                 }
             </ScrollView >
+
+            <EarningsModal
+                visible={earningsModalVisible}
+                onClose={() => setEarningsModalVisible(false)}
+                onSave={(record) => {
+                    if (data.activeSession) {
+                        const app = data.faturamentoApps.find(a => a.id === record.appId);
+                        addEarningsRecord({
+                            ...record,
+                            sessionId: data.activeSession.id,
+                            vehicleId: activeVehicle?.id,
+                            appName: app?.name || 'App Desconhecido'
+                        });
+                        setEarningsModalVisible(false);
+                    }
+                }}
+                sessionId={data.activeSession?.id}
+                defaultVehicleId={activeVehicle?.id}
+            />
         </View >
     );
 }
@@ -539,6 +663,18 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: '700',
     },
+    retroactiveButton: {
+        marginTop: 16,
+        padding: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    retroactiveButtonText: {
+        color: '#9CA3AF',
+        fontSize: 14,
+        fontWeight: '600',
+    },
 
     // Sessions
     section: {
@@ -600,5 +736,168 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#10B981',
         fontWeight: '500',
+    },
+
+    // Updated Styles
+    sessionHeaderInfo: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '100%',
+        marginBottom: 20,
+        paddingHorizontal: 4,
+    },
+    headerDateLabel: {
+        color: '#D1D5DB',
+        fontSize: 14,
+    },
+    statusDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        marginRight: 6,
+    },
+    headerStatusLabel: {
+        color: '#FFF',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    pausedBadge: {
+        backgroundColor: '#F59E0B',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+    },
+    pausedText: {
+        color: '#FFF',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+
+    // Cards Grid
+    cardsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 12,
+        marginBottom: 24,
+    },
+    infoCard: {
+        backgroundColor: '#374151',
+        borderRadius: 16,
+        padding: 16,
+        width: '48%', // 2 cols
+        minHeight: 110,
+        justifyContent: 'space-between',
+    },
+    earningsCard: {
+        width: '100%', // Full width
+        backgroundColor: '#064E3B', // Dark Green bg
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'flex-start',
+        borderWidth: 1,
+        borderColor: '#059669',
+    },
+    cardHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 8,
+    },
+    cardLabel: {
+        color: '#9CA3AF',
+        fontSize: 12,
+        fontWeight: '600',
+        textTransform: 'uppercase',
+    },
+    cardMainValue: {
+        fontSize: 28,
+        fontWeight: 'bold',
+        color: '#FFF',
+    },
+    cardSubValue: {
+        fontSize: 14,
+        color: '#9CA3AF',
+        marginTop: -4,
+    },
+    gpsIndicator: {
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        backgroundColor: 'rgba(0,0,0,0.2)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+    },
+    gpsText: {
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+    vehicleName: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#FFF',
+        marginBottom: 4,
+    },
+    vehicleKm: {
+        fontSize: 12,
+        color: '#9CA3AF',
+    },
+    // Earnings Card specific
+    earningsValue: {
+        fontSize: 32,
+        fontWeight: 'bold',
+        color: '#34D399',
+        width: '100%',
+        marginBottom: 12,
+    },
+    miniAppList: {
+        flex: 1,
+        gap: 4,
+    },
+    miniAppItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: 140,
+    },
+    miniAppName: {
+        color: '#A7F3D0',
+        fontSize: 12,
+    },
+    miniAppValue: {
+        color: '#FFF',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    noEarningsText: {
+        color: '#6EE7B7',
+        fontSize: 12,
+        fontStyle: 'italic',
+    },
+    addEarningButton: {
+        position: 'absolute',
+        right: 16,
+        bottom: 16,
+    },
+
+    // Speed (Footer ish)
+    speedContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginBottom: 24,
+        opacity: 0.6,
+    },
+    speedLabel: {
+        color: '#9CA3AF',
+        fontSize: 12,
+    },
+    speedText: {
+        color: '#FFF',
+        fontWeight: 'bold',
+        fontSize: 14,
     },
 });

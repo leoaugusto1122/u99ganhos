@@ -123,6 +123,8 @@ export interface GPSPoint {
   timestamp: string; // ISO string
   accuracy?: number; // meters
   speed?: number; // m/s
+  isValid?: boolean;
+  invalidationReason?: string;
 }
 
 export type TrackerStatus = 'idle' | 'active' | 'paused' | 'completed';
@@ -144,8 +146,10 @@ export interface KMTrackerSession {
 
   // Integration
   vehicleId?: string;
-  earningsRecordId?: string; // Link to created earnings
+  // earningsRecordId?: string; // DEPRECATED: Earnings now link TO session
   autoSaved: boolean;
+  isManual?: boolean; // For retroactive sessions
+  driftStartTime?: string; // ISO string, for RB-GPS-04 logic
 
   createdAt: Date;
 }
@@ -194,9 +198,14 @@ export interface EarningsRecord {
   variableCosts: VariableCost[];
   totalVariableCosts: number;
   netEarnings: number;
+
+  // Legacy/Manual Compatibility
   hoursWorked?: number;
   kmDriven?: number;
+
   vehicleId?: string;
+  sessionId?: string; // Link to Work Session
+
   createdAt: Date;
 }
 

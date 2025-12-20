@@ -16,8 +16,8 @@ export default function TrackerWidget() {
     const router = useRouter();
     const {
         data,
-        startKMTracking,
-        stopKMTracking,
+        startWorkSession,
+        finishWorkSession,
         pauseKMTracking,
         resumeKMTracking,
         getCurrentSessionDistance,
@@ -77,7 +77,7 @@ export default function TrackerWidget() {
             );
             return;
         }
-        startKMTracking(activeVehicle.id);
+        startWorkSession(activeVehicle.id);
     };
 
     const handleStop = () => {
@@ -85,20 +85,18 @@ export default function TrackerWidget() {
         const duration = formatDuration(currentDuration);
 
         Alert.alert(
-            'Finalizar Percurso',
-            `Distância: ${distance.toFixed(2)} km\nTempo: ${duration}`,
+            'Finalizar Sessão',
+            `Deseja finalizar a sessão de trabalho?\n\nDistância: ${distance.toFixed(2)} km\nTempo: ${duration}`,
             [
-                { text: 'Descartar', style: 'cancel', onPress: () => stopKMTracking(false) },
+                { text: 'Cancelar', style: 'cancel' },
                 {
-                    text: 'Salvar apenas',
-                    onPress: () => stopKMTracking(true)
-                },
-                {
-                    text: 'Salvar e Lançar Ganho',
+                    text: 'Finalizar',
+                    style: 'destructive',
                     onPress: () => {
-                        stopKMTracking(true);
-                        if ((global as any).openEarningsWithKm) {
-                            (global as any).openEarningsWithKm(distance);
+                        const session = finishWorkSession();
+                        if (session) {
+                            // Navigate to Summary with session ID
+                            router.push({ pathname: '/session/summary', params: { sessionId: session.id } });
                         }
                     }
                 }
@@ -136,6 +134,18 @@ export default function TrackerWidget() {
                     <View style={styles.activeInfo}>
                         <Text style={styles.activeDistance}>{currentDistance.toFixed(2)} km</Text>
                         <Text style={styles.activeDuration}>{formatDuration(currentDuration)}</Text>
+
+                        {/* GPS Signal Indicator */}
+                        {isTracking && (
+                            <View style={styles.signalContainer}>
+                                <MaterialIcons name="signal-cellular-alt" size={12} color={
+                                    !data.activeSession?.gpsPoints.length ? '#9CA3AF' :
+                                        (data.activeSession.gpsPoints[data.activeSession.gpsPoints.length - 1].accuracy || 999) < 15 ? '#10B981' :
+                                            (data.activeSession.gpsPoints[data.activeSession.gpsPoints.length - 1].accuracy || 999) < 25 ? '#F59E0B' : '#EF4444'
+                                } />
+                                <Text style={styles.signalText}>GPS</Text>
+                            </View>
+                        )}
                     </View>
 
                     <View style={styles.activeControls}>
@@ -164,14 +174,25 @@ export default function TrackerWidget() {
                 </TouchableOpacity>
             ) : (
                 // Idle State - Quick Start Button
-                <TouchableOpacity
-                    style={styles.quickStartButton}
-                    onPress={handleQuickStart}
-                    activeOpacity={0.8}
-                >
-                    <MaterialIcons name="my-location" size={20} color="#FFF" />
-                    <Text style={styles.quickStartText}>Iniciar Rastreamento</Text>
-                </TouchableOpacity>
+                <>
+                    <TouchableOpacity
+                        style={styles.quickStartButton}
+                        onPress={handleQuickStart}
+                        activeOpacity={0.8}
+                    >
+                        <MaterialIcons name="my-location" size={20} color="#FFF" />
+                        <Text style={styles.quickStartText}>Iniciar Sessão</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        onPress={() => router.push('/session/retroactive' as any)}
+                        style={{ marginTop: 12, alignSelf: 'center' }}
+                    >
+                        <Text style={{ color: '#6B7280', fontSize: 12, textDecorationLine: 'underline' }}>
+                            Esqueceu de iniciar? Adicionar Manualmente
+                        </Text>
+                    </TouchableOpacity>
+                </>
             )}
         </View>
     );
@@ -213,6 +234,16 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#9CA3AF',
         marginTop: 2,
+    },
+    signalContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 4,
+        gap: 2,
+    },
+    signalText: {
+        fontSize: 10,
+        color: '#6B7280',
     },
 
     activeControls: {

@@ -170,7 +170,7 @@ export default function VeiculosScreen() {
                     { text: 'Cancelar', style: 'cancel' },
                     {
                         text: 'Atualizar',
-                        onPress: (value) => {
+                        onPress: (value?: string) => {
                             const km = parseInt(value || '0');
                             if (!isNaN(km) && km >= 0) {
                                 updateVehicleKm(id, km);

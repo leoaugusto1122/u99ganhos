@@ -17,8 +17,8 @@ export default function TrackerFAB() {
     const router = useRouter();
     const {
         data,
-        startKMTracking,
-        stopKMTracking,
+        startWorkSession,
+        finishWorkSession,
         pauseKMTracking,
         resumeKMTracking,
         getCurrentSessionDistance,
@@ -115,7 +115,7 @@ export default function TrackerFAB() {
             return;
         }
 
-        const success = startKMTracking(activeVehicle.id);
+        const success = startWorkSession(activeVehicle.id);
         if (success) {
             setExpanded(false);
         } else {
@@ -128,21 +128,18 @@ export default function TrackerFAB() {
         const duration = formatDuration(currentDuration);
 
         Alert.alert(
-            'Finalizar Percurso',
-            `Distância: ${distance.toFixed(2)} km\nTempo: ${duration}`,
+            'Finalizar Sessão',
+            `Deseja finalizar a sessão de trabalho?\n\nDistância: ${distance.toFixed(2)} km\nTempo: ${duration}`,
             [
-                { text: 'Descartar', style: 'cancel', onPress: () => stopKMTracking(false) },
+                { text: 'Cancelar', style: 'cancel' },
                 {
-                    text: 'Salvar apenas',
-                    onPress: () => stopKMTracking(true)
-                },
-                {
-                    text: 'Salvar e Lançar Ganho',
+                    text: 'Finalizar',
+                    style: 'destructive',
                     onPress: () => {
-                        stopKMTracking(true);
-                        // Call global function to open earnings modal with KM
-                        if ((global as any).openEarningsWithKm) {
-                            (global as any).openEarningsWithKm(distance);
+                        const session = finishWorkSession();
+                        if (session) {
+                            // Navigate to summary
+                            Alert.alert('Sessão Finalizada', 'Resumo da sessão em breve.');
                         }
                     }
                 }

@@ -13,9 +13,11 @@ import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 interface CustomTabBarProps extends BottomTabBarProps {
   onPressGanhos: () => void;
   onPressDespesas: () => void;
+  onPressStartSession: () => void;
+  onPressRetroactive: () => void;
 }
 
-export default function CustomTabBar({ state, descriptors, navigation, onPressGanhos, onPressDespesas }: CustomTabBarProps) {
+export default function CustomTabBar({ state, descriptors, navigation, onPressGanhos, onPressDespesas, onPressStartSession, onPressRetroactive }: CustomTabBarProps) {
   return (
     <View style={styles.container}>
       <View style={styles.tabBar}>
@@ -79,7 +81,12 @@ export default function CustomTabBar({ state, descriptors, navigation, onPressGa
       </View>
       <View style={styles.fabWrapper}>
         {state.index === 0 && (
-          <FloatingActionButton onPressGanhos={onPressGanhos} onPressDespesas={onPressDespesas} />
+          <FloatingActionButton
+            onPressGanhos={onPressGanhos}
+            onPressDespesas={onPressDespesas}
+            onPressStartSession={onPressStartSession}
+            onPressRetroactive={onPressRetroactive}
+          />
         )}
       </View>
     </View>

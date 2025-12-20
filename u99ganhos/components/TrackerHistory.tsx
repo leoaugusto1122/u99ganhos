@@ -75,7 +75,10 @@ export default function TrackerHistory() {
     };
 
     const renderSessionItem = ({ item }: { item: KMTrackerSession }) => (
-        <View style={styles.sessionItem}>
+        <TouchableOpacity
+            style={styles.sessionItem}
+            onPress={() => router.push({ pathname: '/session/summary', params: { sessionId: item.id } })}
+        >
             <View style={styles.sessionIcon}>
                 <MaterialIcons name="route" size={20} color="#00A85A" />
             </View>
@@ -97,7 +100,7 @@ export default function TrackerHistory() {
                 <MaterialIcons name="access-time" size={14} color="#9CA3AF" />
                 <Text style={styles.sessionDurationText}>{formatDuration(item.duration)}</Text>
             </View>
-        </View>
+        </TouchableOpacity>
     );
 
     return (

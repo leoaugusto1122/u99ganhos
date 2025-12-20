@@ -48,8 +48,11 @@ interface FinanceContextType {
   getOverdueMaintenances: () => Maintenance[];
 
   // GPS KM Tracker
-  startKMTracking: (vehicleId?: string) => boolean;
-  stopKMTracking: (autoSave: boolean) => KMTrackerSession | null;
+  // Work Session & Tracker
+  startWorkSession: (vehicleId: string) => boolean;
+  finishWorkSession: () => KMTrackerSession | null;
+  createRetroactiveSession: (sessionData: { date: string, startTime: string, endTime: string, vehicleId: string, totalKm: number }) => KMTrackerSession | null; // Retroactive
+
   pauseKMTracking: () => void;
   resumeKMTracking: () => void;
   addGPSPoint: (point: GPSPoint) => void;
@@ -92,7 +95,7 @@ interface FinanceContextType {
   saveWorkSchedule: () => void;
 
   // Earnings & Home Screen
-  addEarningsRecord: (record: Omit<EarningsRecord, 'id' | 'createdAt' | 'totalVariableCosts' | 'netEarnings'>) => void;
+  addEarningsRecord: (record: Omit<EarningsRecord, 'id' | 'createdAt' | 'totalVariableCosts' | 'netEarnings'> & { id?: string }) => void;
   updateEarningsRecord: (id: string, record: Omit<EarningsRecord, 'id' | 'createdAt' | 'totalVariableCosts' | 'netEarnings'>) => void;
   deleteEarningsRecord: (id: string) => void;
   getDailySummary: (date: string) => DailySummary;
@@ -273,6 +276,15 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   // --- Categories ---
 
+  // Helper for unique IDs
+  const generateId = () => {
+    return Date.now().toString() + '-' + Math.random().toString(36).substring(2, 9);
+  };
+
+  // --- Categories ---
+
+  // --- Categories ---
+
   const addCategory = (name: string): boolean => {
     const trimmedName = name.trim();
     if (!trimmedName) return false;
@@ -284,7 +296,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (exists) return false;
 
     const newCategory: Category = {
-      id: Date.now().toString(),
+      id: generateId(),
       name: trimmedName,
       active: true,
       createdAt: new Date()
@@ -346,7 +358,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const addVehicle = (vehicle: Omit<Vehicle, 'id' | 'createdAt' | 'lastKmUpdate'>): boolean => {
     const newVehicle: Vehicle = {
       ...vehicle,
-      id: Date.now().toString(),
+      id: generateId(),
       createdAt: new Date(),
       lastKmUpdate: new Date().toISOString(),
       active: true // default active
@@ -538,7 +550,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
     const newMaintenance: Maintenance = {
       ...maintenance,
-      id: Date.now().toString(),
+      id: generateId(),
       nextKm,
       nextDate,
       status: 'ok',
@@ -641,7 +653,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       if (!vehicle) return false;
 
       const completion: MaintenanceCompletion = {
-        id: Date.now().toString(),
+        id: generateId(),
         date: new Date().toISOString().split('T')[0],
         km,
         costId,
@@ -715,21 +727,22 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     return R * c; // Distance in km
   };
 
-  const startKMTracking = (vehicleId?: string): boolean => {
+  const startWorkSession = (vehicleId: string): boolean => {
     if (data.activeSession) {
-      console.warn('Already has an active tracking session');
+      Alert.alert('Erro', 'Já existe uma sessão ativa.');
       return false;
     }
 
     const session: KMTrackerSession = {
-      id: Date.now().toString(),
+      id: generateId(),
       startTime: new Date().toISOString(),
       status: 'active',
       totalDistanceKm: 0,
       gpsPoints: [],
       duration: 0,
       vehicleId,
-      autoSaved: false,
+      autoSaved: false, // Will always be saved on finish
+      isManual: false,
       createdAt: new Date()
     };
 
@@ -741,15 +754,13 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       }));
       return true;
     } catch (e) {
-      console.error("Failed to start tracking", e);
+      console.error("Failed to start session", e);
       return false;
     }
   };
 
-  const stopKMTracking = (autoSave: boolean): KMTrackerSession | null => {
-    if (!data.activeSession) {
-      return null;
-    }
+  const finishWorkSession = (): KMTrackerSession | null => {
+    if (!data.activeSession) return null;
 
     const endTime = new Date().toISOString();
     const duration = new Date(endTime).getTime() - new Date(data.activeSession.startTime).getTime();
@@ -765,79 +776,28 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       duration,
       avgSpeed,
       status: 'completed',
-      autoSaved: autoSave
+      autoSaved: true,
+      isManual: false
     };
 
     try {
-      // Update Session in DB
+      // 1. Update Session in DB
       databaseService.updateKMSession(completedSession.id, {
         endTime,
         duration,
         avgSpeed,
         status: 'completed',
-        autoSaved: autoSave,
-        totalDistanceKm: completedSession.totalDistanceKm, // Ensure latest distance
-        gpsPoints: completedSession.gpsPoints // Ensure latest points
+        autoSaved: true,
+        totalDistanceKm: completedSession.totalDistanceKm,
+        gpsPoints: completedSession.gpsPoints
       });
 
-      // If autoSave is true, update vehicle KM AND Earnings Records
-      if (autoSave && completedSession.totalDistanceKm > 0) {
-
-        // 1. Update Vehicle KM
-        if (completedSession.vehicleId) {
-          const vehicle = data.vehicles.find(v => v.id === completedSession.vehicleId);
-          if (vehicle) {
-            const newKm = Math.round((vehicle.currentKm + completedSession.totalDistanceKm) * 100) / 100;
-            updateVehicleKm(vehicle.id, newKm);
-          }
-        }
-
-        // 2. Update Earnings Record (KM & Hours)
-        try {
-          const endDate = new Date();
-          const year = endDate.getFullYear();
-          const month = String(endDate.getMonth() + 1).padStart(2, '0');
-          const day = String(endDate.getDate()).padStart(2, '0');
-          const sessionDate = `${year}-${month}-${day}`;
-
-          const sessionHours = completedSession.duration / (1000 * 60 * 60);
-
-          // Find existing record for today
-          const existingRecords = data.earningsRecords.filter(r => r.date === sessionDate);
-
-          // Prefer a newly created record or one without KM data, otherwise update the last one
-          let targetRecord = existingRecords.find(r => !r.kmDriven || r.kmDriven === 0);
-          if (!targetRecord && existingRecords.length > 0) {
-            targetRecord = existingRecords[existingRecords.length - 1];
-          }
-
-          if (targetRecord) {
-            const newKm = (targetRecord.kmDriven || 0) + completedSession.totalDistanceKm;
-            const newHours = (targetRecord.hoursWorked || 0) + sessionHours;
-
-            // Extract fields to satisfy Omit type in updateEarningsRecord
-            const { id, createdAt, totalVariableCosts, netEarnings, ...rest } = targetRecord;
-
-            updateEarningsRecord(id, {
-              ...rest,
-              kmDriven: Number(newKm.toFixed(2)),
-              hoursWorked: Number(newHours.toFixed(2))
-            });
-          } else if (data.faturamentoApps.length > 0) {
-            // Create new generic record if no record exists for today
-            addEarningsRecord({
-              date: sessionDate,
-              appId: data.faturamentoApps[0].id, // Default to first app
-              appName: data.faturamentoApps[0].name,
-              grossEarnings: 0,
-              variableCosts: [],
-              hoursWorked: Number(sessionHours.toFixed(2)),
-              kmDriven: Number(completedSession.totalDistanceKm.toFixed(2)),
-              vehicleId: completedSession.vehicleId
-            });
-          }
-        } catch (err) {
-          console.error("Failed to auto-update earnings from tracker", err);
+      // 2. Update Vehicle KM (Rule: RB-VEIC-01)
+      if (completedSession.totalDistanceKm > 0 && completedSession.vehicleId) {
+        const vehicle = data.vehicles.find(v => v.id === completedSession.vehicleId);
+        if (vehicle) {
+          const newKm = Math.round((vehicle.currentKm + completedSession.totalDistanceKm) * 100) / 100;
+          updateVehicleKm(vehicle.id, newKm);
         }
       }
 
@@ -850,8 +810,124 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       return completedSession;
 
     } catch (e) {
-      console.error("Failed to stop tracking", e);
-      return null; // Or return session anyway?
+      console.error("Failed to finish session", e);
+      return null;
+    }
+  };
+
+  const addRetroactiveSession = (
+    date: Date, // Date object representing the day
+    startTimeStr: string, // "HH:mm"
+    endTimeStr: string, // "HH:mm"
+    vehicleId: string,
+    totalKm: number
+  ): KMTrackerSession | null => {
+    try {
+      // Construct Full DateTimes
+      // date is likely 00:00:00 of the target day
+
+      const [startHour, startMinute] = startTimeStr.split(':').map(Number);
+      const [endHour, endMinute] = endTimeStr.split(':').map(Number);
+
+      const startDateTime = new Date(date);
+      startDateTime.setHours(startHour, startMinute, 0, 0);
+
+      const endDateTime = new Date(date);
+      endDateTime.setHours(endHour, endMinute, 0, 0);
+
+      // Handle Next Day case if end time < start time?? 
+      // For simplicity, let's assume same day or strictly chronological inputs for now.
+      // Or if end < start, add 1 day to end.
+      if (endDateTime < startDateTime) {
+        endDateTime.setDate(endDateTime.getDate() + 1);
+      }
+
+      const duration = endDateTime.getTime() - startDateTime.getTime();
+
+      const session: KMTrackerSession = {
+        id: generateId(),
+        startTime: startDateTime.toISOString(),
+        endTime: endDateTime.toISOString(),
+        status: 'completed',
+        totalDistanceKm: totalKm,
+        gpsPoints: [],
+        duration: Math.max(0, duration),
+        vehicleId,
+        autoSaved: true,
+        isManual: true,
+        createdAt: new Date()
+      };
+
+      // Persist
+      databaseService.addKMSession(session);
+
+      // Update Vehicle KM
+      if (totalKm > 0) {
+        const vehicle = data.vehicles.find(v => v.id === vehicleId);
+        if (vehicle) {
+          // We update the current KM by adding the retroactive amount.
+          // This is the chosen "Strategy B" from user request (simpler).
+          const newKm = Math.round((vehicle.currentKm + totalKm) * 100) / 100;
+          updateVehicleKm(vehicle.id, newKm);
+        }
+      }
+
+      setData(prev => ({
+        ...prev,
+        kmTrackerSessions: [...prev.kmTrackerSessions, session]
+      }));
+
+      return session;
+
+    } catch (e) {
+      console.error("Failed to add retroactive session", e);
+      return null;
+    }
+  };
+
+  const createRetroactiveSession = (sessionData: { date: string, startTime: string, endTime: string, vehicleId: string, totalKm: number }): KMTrackerSession | null => {
+    try {
+      // Combine date + time
+      // Assuming date is YYYY-MM-DD and times are HH:mm
+      const startDateTime = `${sessionData.date}T${sessionData.startTime}:00`;
+      const endDateTime = `${sessionData.date}T${sessionData.endTime}:00`;
+
+      const duration = new Date(endDateTime).getTime() - new Date(startDateTime).getTime();
+
+      const session: KMTrackerSession = {
+        id: Date.now().toString(),
+        startTime: new Date(startDateTime).toISOString(),
+        endTime: new Date(endDateTime).toISOString(),
+        status: 'completed',
+        totalDistanceKm: sessionData.totalKm,
+        gpsPoints: [],
+        duration: Math.max(0, duration),
+        vehicleId: sessionData.vehicleId,
+        autoSaved: true,
+        isManual: true,
+        createdAt: new Date()
+      };
+
+      databaseService.addKMSession(session);
+
+      // Update Vehicle KM
+      if (sessionData.totalKm > 0) {
+        const vehicle = data.vehicles.find(v => v.id === sessionData.vehicleId);
+        if (vehicle) {
+          const newKm = Math.round((vehicle.currentKm + sessionData.totalKm) * 100) / 100;
+          updateVehicleKm(vehicle.id, newKm);
+        }
+      }
+
+      setData(prev => ({
+        ...prev,
+        kmTrackerSessions: [...prev.kmTrackerSessions, session]
+      }));
+
+      return session;
+    } catch (e) {
+      console.error("Failed to create retroactive session", e);
+      return null;
     }
   };
 
@@ -892,41 +968,109 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Filter out low accuracy points (poor signal) to improve distance calculation
-    if (point.accuracy && point.accuracy > 50) {
-      return;
-    }
-
     setData(prev => {
       if (!prev.activeSession) return prev;
 
-      const newPoints = [...prev.activeSession.gpsPoints, point];
-      let additionalDistance = 0;
-      let maxSpeed = prev.activeSession.maxSpeed || 0;
+      let isValid = true;
+      let invalidationReason: string | undefined;
 
-      // Calculate distance from last point
-      if (prev.activeSession.gpsPoints.length > 0) {
-        const lastPoint = prev.activeSession.gpsPoints[prev.activeSession.gpsPoints.length - 1];
-        additionalDistance = calculateDistance(
-          lastPoint.latitude,
-          lastPoint.longitude,
+      // RB-GPS-01: Accuracy Filter
+      if (point.accuracy && point.accuracy > 30) {
+        isValid = false;
+        invalidationReason = 'low_accuracy';
+      }
+
+      // RB-GPS-02: Speed Filter (> 140 km/h is ~38.8 m/s)
+      if (point.speed && point.speed > 39) {
+        isValid = false;
+        invalidationReason = 'speed_unrealistic';
+      }
+
+      // Prepare Point with Metadata
+      const processedPoint: GPSPoint = {
+        ...point,
+        isValid,
+        invalidationReason
+      };
+
+      // Find last VALID point to calculate distance against
+      // This prevents "teleporting" from a bad point to a good point
+      const lastValidPoint = [...prev.activeSession.gpsPoints].reverse().find(p => p.isValid !== false);
+
+      // RB-GPS-03: Teleport Filter
+      let additionalDistance = 0;
+      if (isValid && lastValidPoint) {
+        const dist = calculateDistance(
+          lastValidPoint.latitude,
+          lastValidPoint.longitude,
           point.latitude,
           point.longitude
         );
+
+        const timeDiff = (new Date(point.timestamp).getTime() - new Date(lastValidPoint.timestamp).getTime()) / 1000;
+
+        // Teleport logic: Large distance in small time
+        // If timeDiff is very large (app resumed), we accept the distance (assuming straight line) 
+        // OR we might want to ignore giant jumps after pause? 
+        // For now, only filter impossible physical movement.
+        if (dist > 0.3 && timeDiff < 5) { // > 300m in < 5s
+          isValid = false;
+          invalidationReason = 'teleport';
+          processedPoint.isValid = false;
+          processedPoint.invalidationReason = 'teleport';
+        } else {
+          additionalDistance = dist;
+        }
       }
 
-      // Update max speed
-      if (point.speed && point.speed > maxSpeed) {
-        maxSpeed = point.speed * 3.6; // Convert m/s to km/h
+      // RB-GPS-04: Drift / Stationary Logic
+      let newDriftStartTime = prev.activeSession.driftStartTime;
+      const speedKmh = (point.speed || 0) * 3.6;
+      let isDrifting = false;
+
+      if (isValid) {
+        if (speedKmh < 5) {
+          // Low speed
+          if (!newDriftStartTime) {
+            newDriftStartTime = point.timestamp;
+          } else {
+            const driftDuration = (new Date(point.timestamp).getTime() - new Date(newDriftStartTime).getTime()) / 1000;
+            if (driftDuration > 20) {
+              isDrifting = true;
+              // In drift mode, we do NOT add distance
+              additionalDistance = 0;
+              // Optionally invalidating point for distance calc? 
+              // No, point is "valid" but distance is filtered.
+              // Or we can say point is ignored for distance.
+            }
+          }
+        } else {
+          // Moved fast enough, reset drift
+          newDriftStartTime = undefined;
+        }
       }
+
+      const newPoints = [...prev.activeSession.gpsPoints, processedPoint];
+      let maxSpeed = prev.activeSession.maxSpeed || 0;
+
+      // Update max speed (only valid points)
+      if (isValid && point.speed && (point.speed * 3.6) > maxSpeed) {
+        maxSpeed = point.speed * 3.6;
+      }
+
+      // Accumulate Distance (only valid and not drifting)
+      // Note: If additionalDistance was calculated but we are now invalid, it is ignored automatically by `isValid` check above?
+      // Wait, I updated `processedPoint.isValid` but `isValid` local var handles logic.
+      const distanceToAdd = (isValid && !isDrifting) ? additionalDistance : 0;
 
       return {
         ...prev,
         activeSession: {
           ...prev.activeSession,
           gpsPoints: newPoints,
-          totalDistanceKm: prev.activeSession.totalDistanceKm + additionalDistance,
-          maxSpeed
+          totalDistanceKm: prev.activeSession.totalDistanceKm + distanceToAdd,
+          maxSpeed,
+          driftStartTime: newDriftStartTime
         }
       };
     });
@@ -1299,7 +1443,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (!trimmedName) return false;
     const exists = data.faturamentoApps.some(app => app.name.toLowerCase() === trimmedName.toLowerCase());
     if (exists) return false;
-    const newApp: FaturamentoApp = { id: Date.now().toString(), name: trimmedName, color, icon, isActive: true, createdAt: new Date() };
+    const newApp: FaturamentoApp = { id: generateId(), name: trimmedName, color, icon, isActive: true, createdAt: new Date() };
     setData(prev => ({ ...prev, faturamentoApps: [...prev.faturamentoApps, newApp] }));
     return true;
   };
@@ -1359,7 +1503,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const addEarningsRecord = (record: Omit<EarningsRecord, 'id' | 'createdAt' | 'totalVariableCosts' | 'netEarnings'>) => {
+  const addEarningsRecord = (record: Omit<EarningsRecord, 'id' | 'createdAt' | 'totalVariableCosts' | 'netEarnings'> & { id?: string }) => {
     const totalVariableCosts = record.variableCosts?.reduce((sum, cost) => sum + cost.value, 0) || 0;
     const netEarnings = record.grossEarnings - totalVariableCosts;
     const app = data.faturamentoApps.find(app => app.id === record.appId);
@@ -1370,7 +1514,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       appName: app?.name || 'App Desconhecido',
       totalVariableCosts,
       netEarnings,
-      id: Date.now().toString(),
+      id: record.id || Date.now().toString() + '-' + Math.random().toString(36).substring(2, 9),
       createdAt: new Date(),
       vehicleId: record.vehicleId // Explicitly preserve vehicleId
     };
@@ -1602,8 +1746,21 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   const getTodayKm = (): number => {
     const today = getLocalDate();
-    const todayRecords = data.earningsRecords.filter(record => record.date === today);
-    return todayRecords.reduce((sum, record) => sum + (record.kmDriven || 0), 0);
+
+    // 1. Session KMs
+    const todaySessions = data.kmTrackerSessions.filter(s => {
+      const sDate = s.startTime.split('T')[0];
+      return sDate === today;
+    });
+    const sessionKm = todaySessions.reduce((sum, s) => sum + s.totalDistanceKm, 0);
+
+    // 2. Standalone Earnings KMs (No Session)
+    const todayStandaloneRecords = data.earningsRecords.filter(record =>
+      record.date === today && !record.sessionId
+    );
+    const earningsKm = todayStandaloneRecords.reduce((sum, record) => sum + (record.kmDriven || 0), 0);
+
+    return sessionKm + earningsKm;
   };
 
   const getAverageKmPerDay = (): number => {
@@ -1873,8 +2030,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       getVehicleMaintenances,
       getUpcomingMaintenances,
       getOverdueMaintenances,
-      startKMTracking,
-      stopKMTracking,
+      startWorkSession,
+      finishWorkSession,
+      createRetroactiveSession,
       pauseKMTracking,
       resumeKMTracking,
       addGPSPoint,

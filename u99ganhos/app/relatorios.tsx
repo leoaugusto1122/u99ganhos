@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ScrollView,
   Dimensions,
-  ProcessColorValue,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFinance } from '@/hooks/useFinance';

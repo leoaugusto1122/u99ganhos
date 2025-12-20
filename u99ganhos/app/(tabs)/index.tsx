@@ -168,17 +168,17 @@ export default function HomeScreen() {
           <View style={styles.indicatorsRow}>
             <View style={styles.indicator}>
               <MaterialIcons name="speed" size={24} color="#F59E0B" />
-              <Text style={styles.indicatorValue}>{todayKm} km</Text>
+              <Text style={styles.indicatorValue} numberOfLines={1} adjustsFontSizeToFit>{todayKm.toFixed(1)} km</Text>
               <Text style={styles.indicatorLabel}>Rodado Hoje</Text>
             </View>
             <View style={styles.indicator}>
               <MaterialIcons name="trending-up" size={24} color="#007AFF" />
-              <Text style={styles.indicatorValue}>{formatCurrency(avgValuePerKm)}</Text>
+              <Text style={styles.indicatorValue} numberOfLines={1} adjustsFontSizeToFit>{formatCurrency(avgValuePerKm)}</Text>
               <Text style={styles.indicatorLabel}>Média R$/KM</Text>
             </View>
             <View style={styles.indicator}>
               <MaterialIcons name="history" size={24} color="#9CA3AF" />
-              <Text style={styles.indicatorValue}>{averageKm} km</Text>
+              <Text style={styles.indicatorValue} numberOfLines={1} adjustsFontSizeToFit>{averageKm.toFixed(1)} km</Text>
               <Text style={styles.indicatorLabel}>Média KM/Dia</Text>
             </View>
           </View>

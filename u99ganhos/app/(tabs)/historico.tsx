@@ -612,7 +612,7 @@ export default function HistoricoScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
-      )}
+
 
       {/* Edit Modals */}
       <EarningsModal

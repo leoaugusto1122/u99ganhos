@@ -44,7 +44,7 @@ export default function MaisScreen() {
       items: [
         { label: 'Veículos', icon: 'directions-car', route: '/veiculos' },
         { label: 'Manutenções', icon: 'build', route: '/manutencoes' },
-        { label: 'Rastreador GPS', icon: 'my-location', route: '/tracker' },
+        { label: 'Sessão de Trabalho', icon: 'work', route: '/tracker' },
         { label: 'Relatórios', icon: 'assessment', route: '/relatorios' },
       ]
     },

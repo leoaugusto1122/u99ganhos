@@ -154,8 +154,18 @@ export const databaseService = {
         hoursWorked REAL,
         kmDriven REAL,
         notes TEXT,
+        sessionId TEXT,
+        vehicleId TEXT,
         createdAt TEXT
       );
+
+      try {
+        db.runSync('ALTER TABLE earnings_records ADD COLUMN sessionId TEXT');
+      } catch (e) { /* ignore */ }
+
+      try {
+        db.runSync('ALTER TABLE earnings_records ADD COLUMN vehicleId TEXT');
+      } catch (e) { /* ignore */ }
 
       CREATE TABLE IF NOT EXISTS km_tracker_sessions (
         id TEXT PRIMARY KEY,
@@ -169,6 +179,8 @@ export const databaseService = {
         avgSpeed REAL,
         autoSaved INTEGER,
         gpsPoints TEXT, -- JSON
+        isManual INTEGER DEFAULT 0,
+        driftStartTime TEXT,
         createdAt TEXT,
         FOREIGN KEY (vehicleId) REFERENCES vehicles(id)
       );
@@ -180,8 +192,16 @@ export const databaseService = {
       );
       
       -- Migration for existing tables
-      try { db.execSync('ALTER TABLE costs ADD COLUMN liters REAL;'); } catch (e) {} -- Ignore if exists
+      -- We run these individually to ensure failure in one doesn't stop others
+      -- Also, IF NOT EXISTS is not standard for ADD COLUMN in all SQLite versions, so we use try/catch in JS
     `);
+
+        try { db.execSync('ALTER TABLE costs ADD COLUMN liters REAL;'); } catch (e) { /* Start afresh or already exists */ }
+        try { db.execSync('ALTER TABLE earnings_records ADD COLUMN sessionId TEXT;'); } catch (e) { /* already exists */ }
+        try { db.execSync('ALTER TABLE earnings_records ADD COLUMN vehicleId TEXT;'); } catch (e) { /* already exists */ }
+        try { db.execSync('ALTER TABLE km_tracker_sessions ADD COLUMN isManual INTEGER DEFAULT 0;'); } catch (e) { /* already exists */ }
+        try { db.execSync('ALTER TABLE km_tracker_sessions ADD COLUMN driftStartTime TEXT;'); } catch (e) { /* already exists */ }
+
         console.log('Database initialized successfully');
     },
 
@@ -556,13 +576,14 @@ export const databaseService = {
         db.runSync(
             `INSERT INTO earnings_records (
                 id, date, appId, appName, grossEarnings, netEarnings, totalVariableCosts,
-                variableCosts, hoursWorked, kmDriven, createdAt
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                variableCosts, hoursWorked, kmDriven, sessionId, vehicleId, createdAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 record.id, record.date, record.appId, record.appName,
                 record.grossEarnings, record.netEarnings, record.totalVariableCosts,
                 JSON.stringify(record.variableCosts), record.hoursWorked || null,
-                record.kmDriven || null, typeof record.createdAt === 'string' ? record.createdAt : record.createdAt.toISOString()
+                record.kmDriven || null, record.sessionId || null, record.vehicleId || null,
+                typeof record.createdAt === 'string' ? record.createdAt : record.createdAt.toISOString()
             ]
         );
     },
@@ -601,6 +622,7 @@ export const databaseService = {
         return rows.map(s => ({
             ...s,
             autoSaved: Boolean(s.autoSaved),
+            isManual: Boolean(s.isManual),
             gpsPoints: JSON.parse(s.gpsPoints)
         }));
     },
@@ -609,13 +631,13 @@ export const databaseService = {
         db.runSync(
             `INSERT INTO km_tracker_sessions (
                 id, vehicleId, startTime, endTime, status, totalDistanceKm, duration,
-                maxSpeed, avgSpeed, autoSaved, gpsPoints, createdAt
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                maxSpeed, avgSpeed, autoSaved, isManual, gpsPoints, driftStartTime, createdAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 session.id, session.vehicleId || null, session.startTime, session.endTime || null,
                 session.status, session.totalDistanceKm, session.duration, session.maxSpeed || null,
-                session.avgSpeed || null, session.autoSaved ? 1 : 0,
-                JSON.stringify(session.gpsPoints), typeof session.createdAt === 'string' ? session.createdAt : session.createdAt.toISOString()
+                session.avgSpeed || null, session.autoSaved ? 1 : 0, session.isManual ? 1 : 0,
+                JSON.stringify(session.gpsPoints), session.driftStartTime || null, typeof session.createdAt === 'string' ? session.createdAt : session.createdAt.toISOString()
             ]
         );
     },
@@ -648,6 +670,36 @@ export const databaseService = {
         db.runSync('DELETE FROM km_tracker_sessions WHERE id = ?', [id]);
     },
 
+    getActiveTrackerSession: (): KMTrackerSession | null => {
+        const row = db.getFirstSync<any>("SELECT * FROM km_tracker_sessions WHERE status = 'active' OR status = 'paused' ORDER BY createdAt DESC LIMIT 1");
+        if (!row) return null;
+        return {
+            ...row,
+            autoSaved: Boolean(row.autoSaved),
+            isManual: Boolean(row.isManual),
+            gpsPoints: JSON.parse(row.gpsPoints)
+        };
+    },
+
+    addGPSPoint: (sessionId: string, point: GPSPoint) => {
+        // Read-modify-write pattern for JSON column in SQLite (simplest for now)
+        const row = db.getFirstSync<any>('SELECT gpsPoints, totalDistanceKm FROM km_tracker_sessions WHERE id = ?', [sessionId]);
+        if (!row) return;
+
+        const points: GPSPoint[] = JSON.parse(row.gpsPoints);
+        points.push(point);
+
+        // Calculate incremental distance if there was a previous point
+        let newDist = row.totalDistanceKm || 0;
+        if (points.length > 1) {
+            const last = points[points.length - 2];
+            const dist = calculateDistance(last.latitude, last.longitude, point.latitude, point.longitude);
+            newDist += dist;
+        }
+
+        db.runSync('UPDATE km_tracker_sessions SET gpsPoints = ?, totalDistanceKm = ? WHERE id = ?', [JSON.stringify(points), newDist, sessionId]);
+    },
+
     // --- WORK SCHEDULE ---
     saveWorkSchedule: (schedule: WorkSchedule) => {
         db.runSync(
@@ -669,4 +721,16 @@ export const databaseService = {
             return null;
         }
     },
+};
+
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
 };

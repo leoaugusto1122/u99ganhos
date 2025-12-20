@@ -59,8 +59,74 @@ export default function TabLayout() {
     action();
   };
 
+  const handleStartSession = () => {
+    // Check for vehicles before starting
+    if (data.vehicles.length === 0) {
+      Alert.alert(
+        'Veículo Obrigatório',
+        'Cadastre um veículo para iniciar a sessão.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Cadastrar', onPress: () => router.push('/veiculos') }
+        ]
+      );
+      return;
+    }
+    router.push('/tracker');
+  };
+
+  const handleRetroactiveSession = () => {
+    // Check for vehicles before starting
+    if (data.vehicles.length === 0) {
+      Alert.alert(
+        'Veículo Obrigatório',
+        'Cadastre um veículo para criar uma sessão.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Cadastrar', onPress: () => router.push('/veiculos') }
+        ]
+      );
+      return;
+    }
+    // Cast strict typed router to any to bypass route type checking if necessary or use proper relative path
+    router.push('/session/retroactive' as any);
+  };
+
+  const handleOpenEarnings = () => {
+    // ENFORCE: Earnings only if session active or paused
+    // Actually, checking if session exists is enough for "earnings".
+    // But the new requirement says: "Para registrar ganhos, inicie uma sessão de trabalho."
+
+    // We double check here just in case, although FAB should handle visibility.
+    // If FAB logic fails or user somehow triggers this:
+    if (data.activeSession?.status !== 'active' && data.activeSession?.status !== 'paused') {
+      Alert.alert(
+        'Sessão Necessária',
+        'Para registrar ganhos, é necessário iniciar uma Sessão de Trabalho.',
+        [
+          { text: 'OK' },
+          { text: 'Iniciar Agora', onPress: () => router.push('/tracker') }
+        ]
+      );
+      return;
+    }
+
+    setEarningsModalVisible(true);
+  };
+
   const handleSaveEarnings = (record: any) => {
-    addEarningsRecord(record);
+    // If we have an active session, ensure properties are linked
+    if (data.activeSession) {
+      addEarningsRecord({
+        ...record,
+        sessionId: data.activeSession.id,
+        vehicleId: data.activeSession.vehicleId || data.vehicles.find(v => v.active)?.id
+        // Note: vehicleId might come from record if Modal allowed selection, but for session we want to enforce it if possible
+      });
+    } else {
+      // Fallback for non-session (shouldn't happen due to validation, but safe to keep)
+      addEarningsRecord(record);
+    }
     setPrefilledKm(undefined); // Clear after saving
   };
 
@@ -87,8 +153,10 @@ export default function TabLayout() {
         tabBar={(props: any) => (
           <CustomTabBar
             {...props}
-            onPressGanhos={() => handleValidation(() => setEarningsModalVisible(true))}
+            onPressGanhos={() => handleValidation(handleOpenEarnings)}
             onPressDespesas={() => handleValidation(() => setCostModalVisible(true))}
+            onPressStartSession={handleStartSession}
+            onPressRetroactive={handleRetroactiveSession}
           />
         )}
         screenOptions={{
@@ -157,6 +225,8 @@ export default function TabLayout() {
         onClose={() => { setEarningsModalVisible(false); setPrefilledKm(undefined); }}
         onSave={handleSaveEarnings}
         prefilledKm={prefilledKm}
+        sessionId={data.activeSession?.id}
+        defaultVehicleId={data.activeSession?.vehicleId || data.vehicles.find(v => v.active)?.id}
       />
       <CostModal
         visible={costModalVisible}
